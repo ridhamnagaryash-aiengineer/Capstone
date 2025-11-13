@@ -18,10 +18,10 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     role = Column(SQLEnum(UserRole), default=UserRole.EMPLOYEE, nullable=False)  # ✅ New field
+    grade= Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-# Keep your PasswordResetToken model as is
 class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
     

@@ -25,6 +25,7 @@ def create_admin():
             username="admin",
             full_name="HR Manager",
             hashed_password=get_password_hash("admin@123"),  # you can change this
+            grade="Admin",
             role=UserRole.ADMIN,
             is_active=True
         )

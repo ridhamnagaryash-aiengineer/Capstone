@@ -9,6 +9,7 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     full_name: Optional[str] = None
     password: str = Field(..., min_length=8)
+    grade: str  # Add grade field for user signup
     # role is NOT included - employees can only signup as employee
 
 class UserResponse(BaseModel):

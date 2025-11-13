@@ -30,7 +30,8 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
         email=user.email,
         username=user.username,
         hashed_password=hashed_password,
-        full_name=user.full_name
+        full_name=user.full_name,
+        grade=user.grade
     )
     
     db.add(db_user)
