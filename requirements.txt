@@ -23,3 +23,5 @@ langgraph
 pymilvus
 sentence-transformers
 # Remove: google-generativeai, openai, anthropic, pinecone-client
+
+pydantic[email]
