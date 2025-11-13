@@ -58,14 +58,17 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
             detail="Inactive user"
         )
     
-    access_token = create_access_token(data={"sub": user.email})
+    access_token = create_access_token(data={"email": user.email, "grade":user.grade, "role":user.role , "username":user.username, "full_name":user.full_name })
     
-    # ✅ Added missing fields to match Token schema
+    # ✅ Return token payload with requested fields (no duplicate keys)
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "expires_in": 3600,                # token expiry in seconds
-        "role": user.role.value if user.role else "employee"  # fallback role
+        "role": user.role.value if user.role else "employee", # fallback role string
+        "grade": user.grade,
+        "username": user.username,
+        "full_name": user.full_name
     }
 
 

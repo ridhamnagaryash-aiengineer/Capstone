@@ -32,7 +32,10 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     expires_in: int
-    role: UserRole  # ✅ Include role in token response
+    role: str  # ✅ Include role in token response
+    grade: str
+    username: str
+    full_name: Optional[str]
 
 # Keep your other schemas (ForgotPassword, ResetPassword, Message) as is
 
