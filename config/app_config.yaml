@@ -17,11 +17,7 @@ security:
   algorithm: "HS256"
   access_token_expire_minutes: 30
 
-aws:
-  access_key_id: "${AWS_ACCESS_KEY_ID}"
-  secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
-  region: "${AWS_REGION}"
-  s3_bucket: "${S3_BUCKET_NAME}"
+
 
 milvus:
   uri: "${MILVUS_URI}"

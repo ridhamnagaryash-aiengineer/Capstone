@@ -1,4 +1,5 @@
 # main.py - Root level
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -50,4 +51,12 @@ async def protected_test(current_user: User = Depends(get_current_active_user)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    # Get port from environment variable, default to 8000 if not set
+    port = int(os.getenv("PORT", 8000))
+    
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port
+    )

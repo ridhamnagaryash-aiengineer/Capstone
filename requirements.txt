@@ -14,15 +14,8 @@ pypdf
 python-docx
 emails
 jinja2
-
-# ✅ LiteLLM instead of direct SDKs
 litellm
 langgraph
-
-# ✅ Milvus
 pymilvus
-
-# Remove: google-generativeai, openai, anthropic, pinecone-client
-
 pydantic[email]
 google-generativeai
