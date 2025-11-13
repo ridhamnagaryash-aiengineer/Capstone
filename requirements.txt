@@ -1,0 +1,25 @@
+# requirements.txt - Updated for LiteLLM
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+python-decouple
+pyyaml
+itsdangerous
+boto3
+pypdf
+python-docx
+emails
+jinja2
+
+# ✅ LiteLLM instead of direct SDKs
+litellm
+langgraph
+
+# ✅ Milvus
+pymilvus
+sentence-transformers
+# Remove: google-generativeai, openai, anthropic, pinecone-client

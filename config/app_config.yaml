@@ -1,0 +1,37 @@
+# config/app_config.yaml
+app:
+  frontend_url: "${FRONTEND_URL}"
+  name: "HR System"
+  version: "1.0.0"
+  debug: false
+
+server:
+  host: "0.0.0.0"
+  port: 8001
+
+database:
+  url: "${DATABASE_URL}"
+
+security:
+  secret_key: "${SECRET_KEY}"
+  algorithm: "HS256"
+  access_token_expire_minutes: 30
+
+aws:
+  access_key_id: "${AWS_ACCESS_KEY_ID}"
+  secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+  region: "${AWS_REGION}"
+  s3_bucket: "${S3_BUCKET_NAME}"
+
+milvus:
+  uri: "${MILVUS_URI}"
+  token: "${MILVUS_TOKEN}"
+  collection_name: "hr_documents"
+
+email:
+  smtp_server: "${SMTP_SERVER}"
+  smtp_port: 587
+  smtp_username: "${SMTP_USERNAME}"
+  smtp_password: "${SMTP_PASSWORD}"
+  from_email: "${FROM_EMAIL}"
+  from_name: "${FROM_NAME}"
