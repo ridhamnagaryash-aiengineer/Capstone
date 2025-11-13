@@ -40,7 +40,6 @@ class ChatResponse(BaseModel):
     """Response model for chat queries"""
     session_id: str
     response: str
-    sources: List[Dict] = Field(default_factory=list)
     message_id: Optional[int] = None
     category: Optional[str] = "uncategorized"
     confidence: Optional[float] = 0.0

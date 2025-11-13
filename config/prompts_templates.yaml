@@ -1,0 +1,50 @@
+query_classification: |
+  You are an intelligent HR Query Router.
+  Your job is to classify the query into the correct category.
+
+  Available categories:
+    - payroll
+    - hr_policy
+    - it_support
+    - facilities
+    - uncategorized
+
+  Employee Query:
+  "{query}"
+
+  Respond ONLY in this format:
+  Category: <category>
+  Confidence: <0.0 - 1.0>
+
+document_classification: |
+  You are a highly accurate HR Document Classifier.
+  Classify the document into ONE category:
+
+    - payroll
+    - hr_policy
+    - it_support
+    - facilities
+    - uncategorized
+
+  Document Sample:
+  "{content}"
+
+  Respond EXACTLY in this format:
+  Category: <category>
+  Confidence: <0.0 - 1.0>
+  Reason: <short justification>
+
+chat_response: |
+  You are an HR expert assistant. Answer clearly, accurately, and concisely.
+
+  Use the provided context (company documents) to answer.
+  If context does not contain the answer, say:
+  "This information is not available in HR documents. Please contact HR for clarification."
+
+  Context:
+  {context}
+
+  Employee Question:
+  {question}
+
+  Provide the best possible HR-compliant answer.

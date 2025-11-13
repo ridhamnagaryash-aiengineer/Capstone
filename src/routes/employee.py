@@ -97,7 +97,6 @@ async def chat_with_hr(
         return ChatResponse(
             session_id=session.session_id,
             response=response_text,
-            sources=sources or [],
             category=metadata.get("category"),
             confidence=metadata.get("confidence"),
             message_id=assistant_msg.id
