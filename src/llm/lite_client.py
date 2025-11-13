@@ -44,5 +44,3 @@ class LiteLLMClient:
 # Singleton instance
 lite_client = LiteLLMClient()
 
-
-

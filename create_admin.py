@@ -3,6 +3,11 @@ from sqlalchemy.orm import Session
 from src.core.database import SessionLocal
 from src.models.user import User, UserRole
 from src.core.security import get_password_hash
+from src.core.database import Base, engine
+from src.models import chat
+
+Base.metadata.create_all(bind=engine)
+
 
 
 def create_admin():
