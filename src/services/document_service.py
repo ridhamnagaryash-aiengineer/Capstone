@@ -1,58 +1,64 @@
+# src/services/document_service.py
+
 import uuid
 import logging
-from typing import Tuple, List
+import os
+from typing import Tuple, List, Optional
+from pathlib import Path
+
 from fastapi import UploadFile, HTTPException, BackgroundTasks
+from sqlalchemy.orm import Session
+
 import fitz  # PyMuPDF
 import docx
-from sqlalchemy.orm import Session
-from pathlib import Path
-import os
 
-# Project imports
 from ..llm.lite_client import lite_client
 from ..vector_db.milvus_client import milvus_client
 from ..agents.document_classifier_agent import document_classifier_agent
 from ..models.document import HRDocument, DocumentCategory
-from ..schemas.document import HRDocumentResponse, HRDocumentList
 
 logger = logging.getLogger(__name__)
 
-# Local storage directory
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class DocumentService:
-    """Handle document upload, processing, and local storage with LiteLLM + Milvus"""
+    """Handles document upload, processing, embedding, and storage."""
 
     def __init__(self):
         self.milvus = milvus_client
         self.llm = lite_client
         self.classifier_agent = document_classifier_agent
-        logger.info("✅ DocumentService initialized (Local Storage Mode)")
+        logger.info("✅ DocumentService initialized")
 
-    # -------------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     async def process_document_upload(
         self,
         file: UploadFile,
         user: any,
         db: Session,
-        background_tasks: BackgroundTasks
-    ) -> HRDocumentResponse:
-        """Single endpoint for document upload and processing"""
-        try:
-            await self.validate_file(file)
-            file_id = str(uuid.uuid4())
+        background_tasks: Optional[BackgroundTasks] = None
+    ) -> HRDocument:
 
-            # Save file locally
-            local_path, file_size = await self._save_locally(file, file_id)
+        await self._validate_file(file)
+        file_id = str(uuid.uuid4())
 
-            # Create DB record
-            document = await self._create_document_record(
-                db, file, user, file_id, local_path, file_size
-            )
+        # Save file locally
+        local_path, file_size = await self._save_locally(file, file_id)
 
-            # Background classification + embeddings
+        # Create DB record
+        document = await self._create_document_record(
+            db=db,
+            file=file,
+            user=user,
+            file_id=file_id,
+            local_path=local_path,
+            file_size=file_size
+        )
+
+        # Process in background
+        if background_tasks:
             background_tasks.add_task(
                 self._process_document_background,
                 file_id,
@@ -60,125 +66,88 @@ class DocumentService:
                 document.id,
                 db
             )
+        else:
+            await self._process_document_background(file_id, file, document.id, db)
 
-            return HRDocumentResponse.model_validate(document)
+        return document
 
-        except Exception as e:
-            logger.error(f"❌ Document upload failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Document upload failed: {str(e)}")
-
-    # -------------------------------------------------------------------------
-    async def validate_file(self, file: UploadFile):
-        """Validate uploaded file type"""
-        allowed_types = [
+    # ----------------------------------------------------------------------
+    async def _validate_file(self, file: UploadFile):
+        """Validate uploaded file type."""
+        allowed = [
             "application/pdf",
             "application/msword",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/plain",
         ]
-        if file.content_type not in allowed_types:
-            raise HTTPException(
-                status_code=400,
-                detail="Unsupported file type. Upload PDF, DOC, DOCX, or TXT only.",
-            )
+        if file.content_type not in allowed:
+            raise HTTPException(400, "Unsupported file. Use PDF, DOC, DOCX, TXT.")
 
-    # -------------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     async def extract_content(self, file: UploadFile) -> str:
-        """Extract text, tables from PDF using PyMuPDF, and text from DOCX/TXT"""
+        """Extract text from PDF, DOCX, or TXT."""
         try:
-            content = ""
-
-            # -------------------- PDF Extraction --------------------
             if file.content_type == "application/pdf":
                 pdf_bytes = await file.read()
-                pdf_path = "temp_extract.pdf"
+                tmp = UPLOAD_DIR / f"tmp_{uuid.uuid4().hex}.pdf"
+                tmp.write_bytes(pdf_bytes)
 
-                # Save temp PDF
-                with open(pdf_path, "wb") as f:
-                    f.write(pdf_bytes)
-
-                doc = fitz.open(pdf_path)
-                extracted_text = []
-
-                for page in doc:
-                    # Extract raw text
-                    extracted_text.append(page.get_text("text"))
-
-                    # Try extracting tables
-                    try:
-                        tables = page.find_tables()
-                        for tbl in tables:
-                            df = tbl.to_pandas()
-                            extracted_text.append(df.to_string())
-                    except Exception:
-                        pass
-
-                content = "\n".join(extracted_text)
-
+                doc = fitz.open(str(tmp))
+                text = "\n".join([p.get_text("text") for p in doc])
                 doc.close()
-                os.remove(pdf_path)
+                tmp.unlink(missing_ok=True)
+
                 await file.seek(0)
-                return content.strip()
+                return text.strip()
 
-            # -------------------- DOC / DOCX Extraction --------------------
-            elif file.content_type in [
+            if file.content_type in (
                 "application/msword",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ]:
-                doc_obj = docx.Document(file.file)
-                for para in doc_obj.paragraphs:
-                    content += para.text + "\n"
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ):
+                await file.seek(0)
+                d = docx.Document(file.file)
+                await file.seek(0)
+                return "\n".join([p.text for p in d.paragraphs]).strip()
 
-            # -------------------- TEXT Extraction --------------------
-            elif file.content_type == "text/plain":
-                content = (await file.read()).decode("utf-8")
+            if file.content_type == "text/plain":
+                await file.seek(0)
+                return (await file.read()).decode("utf-8", "ignore").strip()
 
-            await file.seek(0)
-            return content.strip()
+            return ""
 
         except Exception as e:
-            logger.error(f"❌ Content extraction failed: {e}")
-            raise HTTPException(status_code=400, detail=f"Could not extract content: {str(e)}")
+            logger.exception("❌ Content extraction failed")
+            raise HTTPException(400, f"Content extraction failed: {e}")
 
-    # -------------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     async def _save_locally(self, file: UploadFile, file_id: str) -> Tuple[str, int]:
-        """Save file locally"""
+        """Save file to uploads/."""
         try:
-            file_content = await file.read()
-            file_size = len(file_content)
+            file_bytes = await file.read()
+            size = len(file_bytes)
 
-            max_size = 50 * 1024 * 1024  # 50 MB
-            if file_size > max_size:
-                raise HTTPException(status_code=400, detail="File size exceeds 50MB limit")
+            if size > 50 * 1024 * 1024:
+                raise HTTPException(400, "File exceeds 50MB limit")
 
-            ext = file.filename.split(".")[-1]
-            local_filename = f"{file_id}.{ext}"
-            local_path = UPLOAD_DIR / local_filename
-
-            with open(local_path, "wb") as f:
-                f.write(file_content)
+            ext = (file.filename or "").split(".")[-1]
+            fname = f"{file_id}.{ext}"
+            path = UPLOAD_DIR / fname
+            path.write_bytes(file_bytes)
 
             await file.seek(0)
-            logger.info(f"✅ Saved locally: {local_path}")
-            return str(local_path), file_size
+            return str(path), size
 
         except Exception as e:
-            logger.error(f"❌ Local save failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Local save failed: {str(e)}")
+            logger.exception("❌ Local save failed")
+            raise HTTPException(500, f"Local save failed: {e}")
 
-    # -------------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     async def _create_document_record(
-        self,
-        db: Session,
-        file: UploadFile,
-        user: any,
-        file_id: str,
-        local_path: str,
-        file_size: int
+        self, db: Session, file: UploadFile, user, file_id, local_path, file_size
     ) -> HRDocument:
-        """Create database record for uploaded document"""
+
         try:
-            document = HRDocument(
+            doc = HRDocument(
                 file_id=file_id,
                 filename=os.path.basename(local_path),
                 original_filename=file.filename,
@@ -188,149 +157,128 @@ class DocumentService:
                 content_type=file.content_type,
                 uploaded_by_id=user.id,
                 processing_status="pending",
-                category=DocumentCategory.UNCATEGORIZED,
+                category=DocumentCategory.UNCATEGORIZED
             )
-
-            db.add(document)
+            db.add(doc)
             db.commit()
-            db.refresh(document)
-            logger.info(f"✅ Created document record: {file_id}")
-            return document
+            db.refresh(doc)
+            return doc
 
         except Exception as e:
             db.rollback()
-            logger.error(f"❌ Failed to create document record: {e}")
+            logger.exception("❌ DB record creation failed")
             raise
 
-    # -------------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     async def _process_document_background(
-        self,
-        file_id: str,
-        file: UploadFile,
-        document_id: int,
-        db: Session
+        self, file_id: str, file: UploadFile, document_id: int, db: Session
     ):
-        """Background classification + embedding workflow"""
+        """Extract, classify, embed, and insert into correct Milvus collection."""
         try:
-            document = db.query(HRDocument).filter(HRDocument.id == document_id).first()
-            document.processing_status = "processing"
+            doc = db.query(HRDocument).filter(HRDocument.id == document_id).first()
+            if not doc:
+                raise Exception("Document DB record not found")
+
+            doc.processing_status = "processing"
             db.commit()
-            logger.info(f"⚙️ Background processing started for {file.filename}")
 
-            # Extract file content
+            # Extract content
             content = await self.extract_content(file)
+            if not content:
+                raise Exception("No extractable text")
 
-            # Classify document
-            classification_result = self.classifier_agent.process_document(
+            # Classification + chunking + embeddings
+            result = self.classifier_agent.process_document(
                 file_id=file_id,
                 filename=file.filename,
                 file_content=content,
-                file_type=file.filename.split(".")[-1],
+                file_type=file.filename.split(".")[-1]
             )
 
-            if not classification_result.get("success"):
-                raise Exception(classification_result.get("error", "Classification failed"))
+            if not result.get("success"):
+                raise Exception(result.get("error", "Classifier failed"))
 
-            # Store vectors in Milvus
-            vector_count = await self.milvus.store_document_embeddings(
+            category = result["category"]
+            confidence = float(result["confidence"])
+            chunks = result["chunks"]
+            embeddings = result["embeddings"]
+
+            if not embeddings:
+                raise Exception("No embeddings generated")
+
+            # SINGLE CALL INSERT — ALL EMBEDDINGS AT ONCE
+            total_vectors = await self.milvus.store_document_embeddings(
                 file_id=file_id,
                 filename=file.filename,
                 content=content,
-                embeddings=classification_result["embeddings"],
-                category=classification_result["category"],
+                embeddings=embeddings,
+                category=category
             )
 
-            # Update DB
-            document.category = DocumentCategory(classification_result["category"])
-            document.classification_confidence = classification_result.get("confidence", 0.0)
-            document.vector_count = vector_count
-            document.processing_status = "completed"
+            # Update DB record
+            doc.category = DocumentCategory(category)
+            doc.classification_confidence = confidence
+            doc.vector_count = total_vectors
+            doc.processing_status = "completed"
             db.commit()
 
             logger.info(
-                f"✅ Document processed: {file.filename} → "
-                f"{classification_result['category']} (vectors: {vector_count})"
+                f"✅ Document processed: {file.filename} → {category} ({total_vectors} vectors)"
             )
 
         except Exception as e:
-            logger.error(f"❌ Background processing failed: {e}")
-            document = db.query(HRDocument).filter(HRDocument.id == document_id).first()
-            document.processing_status = "failed"
-            document.error_message = str(e)
-            db.commit()
+            logger.exception("❌ Background processing failed")
 
-    # -------------------------------------------------------------------------
-    async def get_user_documents(self, user_id: int, db: Session) -> HRDocumentList:
-        """Get all documents uploaded by a user"""
-        try:
-            documents = (
-                db.query(HRDocument)
-                .filter(HRDocument.uploaded_by_id == user_id)
-                .order_by(HRDocument.uploaded_at.desc())
-                .all()
-            )
-            return HRDocumentList(
-                total=len(documents),
-                documents=[HRDocumentResponse.model_validate(doc) for doc in documents],
-            )
-        except Exception as e:
-            logger.error(f"❌ Failed to fetch user documents: {e}")
-            raise HTTPException(status_code=500, detail="Failed to retrieve documents")
+            try:
+                doc = db.query(HRDocument).filter(HRDocument.id == document_id).first()
+                if doc:
+                    doc.processing_status = "failed"
+                    doc.error_message = str(e)
+                    db.commit()
+            except:
+                db.rollback()
 
-    # -------------------------------------------------------------------------
-    async def delete_document(self, file_id: str, user_id: int, db: Session) -> dict:
-        """Delete document + embeddings + local file"""
+    # ----------------------------------------------------------------------
+    async def get_user_documents(self, user_id: int, db: Session):
+        return (
+            db.query(HRDocument)
+            .filter(HRDocument.uploaded_by_id == user_id)
+            .order_by(HRDocument.uploaded_at.desc())
+            .all()
+        )
+
+    # ----------------------------------------------------------------------
+    async def delete_document(self, file_id: str, user_id: int, db: Session):
         try:
-            document = (
+            doc = (
                 db.query(HRDocument)
                 .filter(HRDocument.file_id == file_id, HRDocument.uploaded_by_id == user_id)
                 .first()
             )
+            if not doc:
+                raise HTTPException(404, "Document not found")
 
-            if not document:
-                raise HTTPException(status_code=404, detail="Document not found")
+            # delete local file
+            p = Path(doc.s3_url)
+            if p.exists():
+                p.unlink()
 
-            # Delete local file
-            local_path = Path(document.s3_url)
-            if local_path.exists():
-                local_path.unlink()
-                logger.info(f"🗑️ Deleted local file: {local_path}")
+            # delete from milvus
+            deleted = await self.milvus.delete_by_file_id(file_id)
 
-            # Delete vectors
-            milvus_deleted = await self.milvus.delete_by_file_id(file_id)
-
-            db.delete(document)
+            db.delete(doc)
             db.commit()
 
             return {
-                "message": f"Document '{document.original_filename}' deleted successfully",
+                "message": f"Deleted '{doc.original_filename}'",
                 "file_id": file_id,
-                "vectors_deleted": milvus_deleted,
+                "vectors_deleted": deleted
             }
 
-        except HTTPException:
-            raise
         except Exception as e:
             db.rollback()
-            logger.error(f"❌ Document deletion failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Deletion failed: {str(e)}")
-
-    # -------------------------------------------------------------------------
-    def test_connections(self) -> dict:
-        """Test Milvus connection"""
-        milvus_ok = self._test_milvus_connection()
-        return {"milvus": milvus_ok, "all_ok": milvus_ok}
-
-    def _test_milvus_connection(self) -> bool:
-        """Check Milvus health"""
-        try:
-            stats = self.milvus.get_collection_stats()
-            logger.info(f"✅ Milvus connection OK (Vectors: {stats['total_vectors']})")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Milvus connection failed: {e}")
-            return False
+            logger.exception("❌ Delete failed")
+            raise HTTPException(500, f"Delete failed: {e}")
 
 
-# Singleton instance
 document_service = DocumentService()
