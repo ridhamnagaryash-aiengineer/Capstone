@@ -1,3 +1,5 @@
+# src/agents/query_router_agent.py
+
 import logging
 from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, END
@@ -7,6 +9,25 @@ from src.vector_db.milvus_client import milvus_client
 from config.prompts_loader import prompt_loader
 
 logger = logging.getLogger(__name__)
+
+
+# Same normalizer as documents
+def normalize_category(raw: str) -> str:
+    t = (raw or "").lower()
+
+    if "payroll" in t or "salary" in t:
+        return "payroll"
+
+    if "facility" in t or "facilities" in t or "maintenance" in t:
+        return "facilities"
+
+    if "it" in t or "tech" in t or "support" in t or "helpdesk" in t:
+        return "it_support"
+
+    if "policy" in t or "hr" in t or "leave" in t:
+        return "hr_policy"
+
+    return "uncategorized"
 
 
 class QueryState(TypedDict):
@@ -25,35 +46,13 @@ class QueryState(TypedDict):
 
 
 class QueryRouterAgent:
-    """LangGraph-based router using embeddings + Milvus + prompt templates + user personalization."""
-
     def __init__(self):
         self.llm = lite_client
         self.db = milvus_client
         self.templates = prompt_loader
         self.workflow = self._build()
 
-    # -------------------------------------------------
-    # PERSONALIZATION SUPPORT
-    # -------------------------------------------------
-    def _format_user_context(self, user_info: Dict[str, Any]) -> str:
-        """Inject user's name + grade into LLM prompt."""
-        if not user_info:
-            return ""
-
-        username = user_info.get("username") or "User"
-        grade = user_info.get("grade")
-
-        ctx = f"User Name: {username}.\n"
-        if grade:
-            ctx += f"User Grade: {grade}.\n"
-
-        ctx += "Use the user's name and grade to personalize the response.\n"
-        return ctx
-
-    # -------------------------------------------------
-    # GRAPH BUILD
-    # -------------------------------------------------
+    # Build graph
     def _build(self):
         g = StateGraph(QueryState)
 
@@ -63,7 +62,6 @@ class QueryRouterAgent:
         g.add_node("generate_response", self.generate_response)
 
         g.set_entry_point("classify_query")
-
         g.add_edge("classify_query", "generate_embedding")
         g.add_edge("generate_embedding", "search_milvus")
         g.add_edge("search_milvus", "generate_response")
@@ -71,129 +69,100 @@ class QueryRouterAgent:
 
         return g.compile()
 
-    # -------------------------------------------------
-    # NODE 1 — QUERY CLASSIFICATION
-    # -------------------------------------------------
+    # ---------------- 1. classify ----------------
     def classify_query(self, state: QueryState) -> QueryState:
         state["current_node"] = "classify_query"
         try:
-            template = self.templates.get("query_classification")
-            prompt = template.format(query=state["user_query"])
+            prompt = self.templates["query_classification"].format(
+                query=state["user_query"]
+            )
+            response = self.llm.chat_completion([{"role": "user", "content": prompt}])
 
-            response = self.llm.chat_completion([
-                {"role": "user", "content": prompt}
-            ])
-
-            category = "uncategorized"
-            confidence = 0.0
+            raw_cat = "uncategorized"
+            conf = 0.0
 
             for line in response.splitlines():
-                low = line.strip().lower()
-                if low.startswith("category:"):
-                    category = line.split(":", 1)[1].strip().lower()
-                elif low.startswith("confidence:"):
+                l = line.strip().lower()
+                if l.startswith("category:"):
+                    raw_cat = line.split(":", 1)[1].strip().lower()
+                elif l.startswith("confidence:"):
                     try:
-                        confidence = float(line.split(":", 1)[1].strip())
+                        conf = float(line.split(":", 1)[1].strip())
                     except:
-                        confidence = 0.5
+                        conf = 0.5
 
-            state["query_category"] = category
-            state["confidence"] = confidence
+            # **STRICT NORMALIZATION**
+            norm_cat = normalize_category(raw_cat)
+
+            state["query_category"] = norm_cat
+            state["confidence"] = conf
             return state
 
         except Exception as e:
-            logger.error(f"classify_query error: {e}")
-            state["error"] = str(e)
             state["query_category"] = "uncategorized"
             state["confidence"] = 0.0
+            state["error"] = str(e)
             return state
 
-    # -------------------------------------------------
-    # NODE 2 — EMBEDDING GENERATION
-    # -------------------------------------------------
+    # ---------------- 2. embedding ----------------
     def generate_embedding(self, state: QueryState) -> QueryState:
         state["current_node"] = "generate_embedding"
         try:
-            embedding = self.llm.create_embedding(state["user_query"])
-            state["query_embedding"] = embedding
+            state["query_embedding"] = self.llm.create_embedding(
+                state["user_query"]
+            )
             return state
-
         except Exception as e:
-            logger.error(f"Embedding error: {e}")
             state["error"] = f"embedding_error: {e}"
             return state
 
-    # -------------------------------------------------
-    # NODE 3 — VECTOR SEARCH
-    # -------------------------------------------------
+    # ---------------- 3. milvus search ----------------
     async def search_milvus(self, state: QueryState) -> QueryState:
         state["current_node"] = "search_milvus"
         try:
             results = await self.db.search_similar(
                 query=state["user_query"],
-                category=state["query_category"],
-                limit=5
+                category=state["query_category"],  # NOW ALWAYS VALID
+                limit=5,
             )
             state["retrieved_chunks"] = results
             return state
 
         except Exception as e:
-            logger.error(f"search_milvus error: {e}")
-            state["retrieved_chunks"] = []
             state["error"] = str(e)
+            state["retrieved_chunks"] = []
             return state
 
-    # -------------------------------------------------
-    # NODE 4 — RESPONSE GENERATION (PERSONALIZED)
-    # -------------------------------------------------
+    # ---------------- 4. response ----------------
     def generate_response(self, state: QueryState) -> QueryState:
         state["current_node"] = "generate_response"
 
         try:
             docs = state["retrieved_chunks"]
+            user_context = ""
 
-            # -------------------------------------------------
-            # 🔥 FALLBACK: No documents found → use personalization
-            # -------------------------------------------------
             if not docs:
-                user_context = self._format_user_context(state.get("user_info"))
-
-                fallback_prompt = (
-                    f"{user_context}\n"
-                    f"The user asked: '{state['user_query']}'.\n"
-                    "No HR policy documents were retrieved, so answer using ONLY the user information above.\n"
-                    "If the user asks for their name, use the name in the user context.\n"
-                    "Do NOT say anything about missing documents.\n"
+                fallback = (
+                    f"User asked: {state['user_query']}\n"
+                    "No HR documents matched. Answer as per general HR knowledge."
                 )
-
-                answer = self.llm.chat_completion([
-                    {"role": "user", "content": fallback_prompt}
-                ])
-
-                state["llm_response"] = answer
+                out = self.llm.chat_completion([{"role": "user", "content": fallback}])
+                state["llm_response"] = out
                 state["sources"] = []
                 state["success"] = True
                 return state
 
-            # -------------------------------------------------
-            # NORMAL RAG MODE
-            # -------------------------------------------------
             context = "\n\n".join(
                 [f"[{d['filename']}]\n{d['content']}" for d in docs]
             )
 
-            user_context = self._format_user_context(state.get("user_info"))
-            template = self.templates.get("chat_response")
-
-            prompt = template.format(
+            prompt = self.templates["chat_response"].format(
                 context=context,
                 question=state["user_query"],
-                user_context=user_context
+                user_context=user_context,
             )
 
-            answer = self.llm.chat_completion([
-                {"role": "user", "content": prompt}
-            ])
+            answer = self.llm.chat_completion([{"role": "user", "content": prompt}])
 
             state["llm_response"] = answer
             state["sources"] = docs
@@ -201,18 +170,15 @@ class QueryRouterAgent:
             return state
 
         except Exception as e:
-            logger.error(f"response_error: {e}")
             state["error"] = f"response_error: {e}"
             state["success"] = False
             return state
 
-    # -------------------------------------------------
-    # PUBLIC ENTRYPOINT (CALLED BY ChatService)
-    # -------------------------------------------------
-    async def process_query(self, user_query: str, chat_history: List[Dict], user_info=None) -> Dict:
+    # Entrypoint
+    async def process_query(self, user_query, chat_history, user_info=None):
         initial: QueryState = {
             "user_query": user_query,
-            "chat_history": chat_history or [],
+            "chat_history": chat_history,
             "query_category": "",
             "confidence": 0.0,
             "query_embedding": [],
@@ -222,18 +188,18 @@ class QueryRouterAgent:
             "current_node": "",
             "error": "",
             "success": False,
-            "user_info": user_info or {}
+            "user_info": user_info or {},
         }
 
         final = await self.workflow.ainvoke(initial)
 
         return {
-            "response": final.get("llm_response"),
-            "sources": final.get("sources", []),
-            "category": final.get("query_category"),
-            "confidence": final.get("confidence"),
-            "success": final.get("success"),
-            "error": final.get("error")
+            "response": final["llm_response"],
+            "sources": final["sources"],
+            "category": final["query_category"],
+            "confidence": final["confidence"],
+            "success": final["success"],
+            "error": final["error"],
         }
 
 
