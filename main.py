@@ -50,10 +50,22 @@ async def custom_error_handler(request: Request, exc: CustomError):
 async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    def sanitize(obj):
+        if isinstance(obj, bytes):
+            try:
+                return obj.decode("utf-8", errors="replace")
+            except:
+                return str(obj)
+        if isinstance(obj, dict):
+            return {k: sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [sanitize(v) for v in obj]
+        return obj
+
+    safe_errors = sanitize(exc.errors())
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
 
 
 @app.exception_handler(Exception)

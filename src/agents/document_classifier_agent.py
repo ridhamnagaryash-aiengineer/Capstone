@@ -11,25 +11,41 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-# ------------------------------------------------------
-# STRICT CATEGORY NORMALIZER (CRITICAL)
-# ------------------------------------------------------
 def normalize_category(raw: str) -> str:
     t = (raw or "").lower()
+    t = t.replace("-", " ").replace("_", " ").strip()
 
-    if "payroll" in t or "salary" in t or "compensation" in t:
-        return "payroll"
-
-    if "facility" in t or "facilities" in t or "maintenance" in t or "cafeteria" in t:
-        return "facilities"
-
-    if "it" in t or "tech" in t or "technical" in t or "support" in t or "helpdesk" in t:
-        return "it_support"
-
-    if "policy" in t or "hr policy" in t or "leave" in t or "attendance" in t or "hr_" in t:
+    # HR POLICY
+    if any(k in t for k in [
+        "policy", "hr", "leave", "attendance", "holiday",
+        "probation", "onboarding", "exit", "transfer"
+    ]):
         return "hr_policy"
 
+    # PAYROLL
+    if any(k in t for k in [
+        "payroll", "salary", "compensation", "ctc", "slip",
+        "bonus", "payout", "reimbursement"
+    ]):
+        return "payroll"
+
+    # IT SUPPORT
+    if any(k in t for k in [
+        "it", "tech", "technical", "support", "helpdesk",
+        "laptop", "vpn", "email", "hardware", "software", "reset"
+    ]):
+        return "it_support"
+
+    # FACILITIES
+    if any(k in t for k in [
+        "facility", "facilities", "maintenance", "office",
+        "building", "cleaning", "canteen", "cafeteria",
+        "workplace", "premises"
+    ]):
+        return "facilities"
+
     return "uncategorized"
+
 
 
 # ------------------------------------------------------
