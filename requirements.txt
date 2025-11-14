@@ -10,7 +10,7 @@ python-decouple
 pyyaml
 itsdangerous
 boto3
-pypdf
+#pypdf
 python-docx
 emails
 jinja2
@@ -19,3 +19,4 @@ langgraph
 pymilvus
 pydantic[email]
 google-generativeai
+pymupdf

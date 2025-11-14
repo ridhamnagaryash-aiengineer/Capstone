@@ -6,7 +6,7 @@ load_dotenv()
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-
+from src.services.kb_loader import load_initial_kb
 from src.core.database import get_db, engine, Base
 from src.core.security import get_current_active_user
 from src.models.user import User
@@ -37,6 +37,12 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(emp_router)
 
+
+@app.on_event("startup")
+async def build_kb():
+    db = next(get_db())
+    await load_initial_kb(db)
+    
 @app.get("/")
 async def root():
     return {"message": "HR Assistant API is running"}

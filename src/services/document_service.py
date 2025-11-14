@@ -2,7 +2,7 @@ import uuid
 import logging
 from typing import Tuple, List
 from fastapi import UploadFile, HTTPException, BackgroundTasks
-from pypdf import PdfReader
+import fitz  # PyMuPDF
 import docx
 from sqlalchemy.orm import Session
 from pathlib import Path
@@ -31,6 +31,7 @@ class DocumentService:
         self.classifier_agent = document_classifier_agent
         logger.info("✅ DocumentService initialized (Local Storage Mode)")
 
+    # -------------------------------------------------------------------------
     async def process_document_upload(
         self,
         file: UploadFile,
@@ -51,7 +52,7 @@ class DocumentService:
                 db, file, user, file_id, local_path, file_size
             )
 
-            # Background classification and embedding
+            # Background classification + embeddings
             background_tasks.add_task(
                 self._process_document_background,
                 file_id,
@@ -66,6 +67,7 @@ class DocumentService:
             logger.error(f"❌ Document upload failed: {e}")
             raise HTTPException(status_code=500, detail=f"Document upload failed: {str(e)}")
 
+    # -------------------------------------------------------------------------
     async def validate_file(self, file: UploadFile):
         """Validate uploaded file type"""
         allowed_types = [
@@ -80,21 +82,54 @@ class DocumentService:
                 detail="Unsupported file type. Upload PDF, DOC, DOCX, or TXT only.",
             )
 
+    # -------------------------------------------------------------------------
     async def extract_content(self, file: UploadFile) -> str:
-        """Extract text content from a file"""
+        """Extract text, tables from PDF using PyMuPDF, and text from DOCX/TXT"""
         try:
             content = ""
+
+            # -------------------- PDF Extraction --------------------
             if file.content_type == "application/pdf":
-                pdf_reader = PdfReader(file.file)
-                for page in pdf_reader.pages:
-                    content += page.extract_text() + "\n"
+                pdf_bytes = await file.read()
+                pdf_path = "temp_extract.pdf"
+
+                # Save temp PDF
+                with open(pdf_path, "wb") as f:
+                    f.write(pdf_bytes)
+
+                doc = fitz.open(pdf_path)
+                extracted_text = []
+
+                for page in doc:
+                    # Extract raw text
+                    extracted_text.append(page.get_text("text"))
+
+                    # Try extracting tables
+                    try:
+                        tables = page.find_tables()
+                        for tbl in tables:
+                            df = tbl.to_pandas()
+                            extracted_text.append(df.to_string())
+                    except Exception:
+                        pass
+
+                content = "\n".join(extracted_text)
+
+                doc.close()
+                os.remove(pdf_path)
+                await file.seek(0)
+                return content.strip()
+
+            # -------------------- DOC / DOCX Extraction --------------------
             elif file.content_type in [
                 "application/msword",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             ]:
-                doc = docx.Document(file.file)
-                for paragraph in doc.paragraphs:
-                    content += paragraph.text + "\n"
+                doc_obj = docx.Document(file.file)
+                for para in doc_obj.paragraphs:
+                    content += para.text + "\n"
+
+            # -------------------- TEXT Extraction --------------------
             elif file.content_type == "text/plain":
                 content = (await file.read()).decode("utf-8")
 
@@ -105,6 +140,7 @@ class DocumentService:
             logger.error(f"❌ Content extraction failed: {e}")
             raise HTTPException(status_code=400, detail=f"Could not extract content: {str(e)}")
 
+    # -------------------------------------------------------------------------
     async def _save_locally(self, file: UploadFile, file_id: str) -> Tuple[str, int]:
         """Save file locally"""
         try:
@@ -130,6 +166,7 @@ class DocumentService:
             logger.error(f"❌ Local save failed: {e}")
             raise HTTPException(status_code=500, detail=f"Local save failed: {str(e)}")
 
+    # -------------------------------------------------------------------------
     async def _create_document_record(
         self,
         db: Session,
@@ -145,8 +182,8 @@ class DocumentService:
                 file_id=file_id,
                 filename=os.path.basename(local_path),
                 original_filename=file.filename,
-                s3_url=local_path,  # repurposed as local file path
-                s3_key=None,  # no S3 anymore
+                s3_url=local_path,
+                s3_key=None,
                 file_size=file_size,
                 content_type=file.content_type,
                 uploaded_by_id=user.id,
@@ -165,6 +202,7 @@ class DocumentService:
             logger.error(f"❌ Failed to create document record: {e}")
             raise
 
+    # -------------------------------------------------------------------------
     async def _process_document_background(
         self,
         file_id: str,
@@ -182,7 +220,7 @@ class DocumentService:
             # Extract file content
             content = await self.extract_content(file)
 
-            # ✅ Run document classification (sync agent)
+            # Classify document
             classification_result = self.classifier_agent.process_document(
                 file_id=file_id,
                 filename=file.filename,
@@ -193,7 +231,7 @@ class DocumentService:
             if not classification_result.get("success"):
                 raise Exception(classification_result.get("error", "Classification failed"))
 
-            # ✅ Store embeddings in Milvus
+            # Store vectors in Milvus
             vector_count = await self.milvus.store_document_embeddings(
                 file_id=file_id,
                 filename=file.filename,
@@ -202,7 +240,7 @@ class DocumentService:
                 category=classification_result["category"],
             )
 
-            # ✅ Update DB record
+            # Update DB
             document.category = DocumentCategory(classification_result["category"])
             document.classification_confidence = classification_result.get("confidence", 0.0)
             document.vector_count = vector_count
@@ -210,7 +248,7 @@ class DocumentService:
             db.commit()
 
             logger.info(
-                f"✅ Document processed successfully: {file.filename} → "
+                f"✅ Document processed: {file.filename} → "
                 f"{classification_result['category']} (vectors: {vector_count})"
             )
 
@@ -221,6 +259,7 @@ class DocumentService:
             document.error_message = str(e)
             db.commit()
 
+    # -------------------------------------------------------------------------
     async def get_user_documents(self, user_id: int, db: Session) -> HRDocumentList:
         """Get all documents uploaded by a user"""
         try:
@@ -238,6 +277,7 @@ class DocumentService:
             logger.error(f"❌ Failed to fetch user documents: {e}")
             raise HTTPException(status_code=500, detail="Failed to retrieve documents")
 
+    # -------------------------------------------------------------------------
     async def delete_document(self, file_id: str, user_id: int, db: Session) -> dict:
         """Delete document + embeddings + local file"""
         try:
@@ -256,7 +296,7 @@ class DocumentService:
                 local_path.unlink()
                 logger.info(f"🗑️ Deleted local file: {local_path}")
 
-            # Delete from Milvus
+            # Delete vectors
             milvus_deleted = await self.milvus.delete_by_file_id(file_id)
 
             db.delete(document)
@@ -275,8 +315,9 @@ class DocumentService:
             logger.error(f"❌ Document deletion failed: {e}")
             raise HTTPException(status_code=500, detail=f"Deletion failed: {str(e)}")
 
+    # -------------------------------------------------------------------------
     def test_connections(self) -> dict:
-        """Test Milvus connection (S3 removed)"""
+        """Test Milvus connection"""
         milvus_ok = self._test_milvus_connection()
         return {"milvus": milvus_ok, "all_ok": milvus_ok}
 
@@ -291,6 +332,5 @@ class DocumentService:
             return False
 
 
-# Global singleton instance
+# Singleton instance
 document_service = DocumentService()
-
