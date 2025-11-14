@@ -3,16 +3,18 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from src.services.kb_loader import load_initial_kb
 from src.core.database import get_db, engine, Base
 from src.core.security import get_current_active_user
 from src.models.user import User
 from src.routes.admin import admin_router
 from src.routes.auth import auth_router
 from src.routes.employee import emp_router
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError, HTTPException as FastAPIHTTPException
+from src.handlers.error_handler import error_handler as CustomError
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -38,10 +40,28 @@ app.include_router(admin_router)
 app.include_router(emp_router)
 
 
-@app.on_event("startup")
-async def build_kb():
-    db = next(get_db())
-    await load_initial_kb(db)
+# Centralized exception handlers
+@app.exception_handler(CustomError)
+async def custom_error_handler(request: Request, exc: CustomError):
+    return JSONResponse(status_code=getattr(exc, "status_code", 500), content={"detail": str(exc)}, headers=getattr(exc, "headers", {}))
+
+
+@app.exception_handler(FastAPIHTTPException)
+async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # For security, avoid returning full exception details in production
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
     
 @app.get("/")
 async def root():
