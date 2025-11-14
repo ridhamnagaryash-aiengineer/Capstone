@@ -1,72 +1,95 @@
 import os
 import logging
 from typing import List, Dict, Any, Optional
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
+from pymilvus import connections, Collection, utility
+
 from ..llm.lite_client import lite_client
 
 logger = logging.getLogger(__name__)
 
+# Pre-existing collections in your Zilliz cluster
+COLLECTIONS = {
+    "hr_policy": "hrms_hr_policy",
+    "payroll": "hrms_payroll",
+    "it_support": "hrms_it_support",
+    "facilities": "hrms_facilities",
+    "uncategorized": "hrms_uncategorized"
+}
+
+DEFAULT_COLLECTION = "hrms_uncategorized"
+
+
 class MilvusClient:
-    """Milvus/Zilliz vector database client for storing and searching HR document embeddings."""
+    """Milvus client using your 5 existing HR category collections."""
 
     def __init__(self):
-        self.collection_name = "hr_documents"
         self.dim = 768
-        self.collection = None
+        self.collections: Dict[str, Collection] = {}
         self._connect()
-        self._setup_collection()
+        self._load_collections()
 
-    # ------------------------ CONNECTION ------------------------
+    # -------------------------------------------------------------
+    # CONNECT TO ZILLIZ / MILVUS CLOUD
+    # -------------------------------------------------------------
     def _connect(self):
-        """Connect to Zilliz Cloud or local Milvus."""
         try:
-            uri = os.getenv("MILVUS_URI", "https://in03-28f34bee2591c4c.serverless.aws-eu-central-1.cloud.zilliz.com")
-            token = os.getenv("MILVUS_API_KEY", "")
-            connections.connect(alias="default", uri=uri, token=token)
-            logger.info("✅ Connected to Zilliz/Milvus successfully")
+            uri = os.getenv("MILVUS_URI")
+            token = os.getenv("MILVUS_API_KEY")
+
+            if not uri or not token:
+                raise ValueError("MILVUS_URI or MILVUS_API_KEY not set in env.")
+
+            connections.connect(
+                alias="default",
+                uri=uri,
+                token=token
+            )
+            logger.info("✅ Connected to Milvus/Zilliz successfully")
+
         except Exception as e:
-            logger.error(f"❌ Failed to connect to Zilliz/Milvus: {e}")
+            logger.error(f"❌ Milvus connection failed: {e}")
             raise
 
-    # ------------------------ COLLECTION SETUP ------------------------
-    def _setup_collection(self):
-        """Load or create HR collection schema."""
-        try:
-            if utility.has_collection(self.collection_name):
-                self.collection = Collection(self.collection_name)
-                logger.info(f"✅ Loaded existing collection: {self.collection_name}")
-            else:
-                self._create_collection()
-        except Exception as e:
-            logger.error(f"❌ Collection setup failed: {e}")
-            raise
+    # -------------------------------------------------------------
+    # LOAD EXISTING COLLECTIONS ONLY (NO CREATION)
+    # -------------------------------------------------------------
+    def _load_collections(self):
+        for key, name in COLLECTIONS.items():
+            try:
+                if utility.has_collection(name):
+                    col = Collection(name)
+                    col.load()
+                    self.collections[key] = col
+                    logger.info(f"📌 Loaded existing collection: {name}")
+                else:
+                    logger.warning(f"⚠ Collection NOT found in cluster: {name}")
 
-    def _create_collection(self):
-        """Define schema and create new collection."""
-        try:
-            fields = [
-                FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-                FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=256),
-                FieldSchema(name="filename", dtype=DataType.VARCHAR, max_length=512),
-                FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
-                FieldSchema(name="category", dtype=DataType.VARCHAR, max_length=100),
-                FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=self.dim)
-            ]
-            schema = CollectionSchema(fields=fields, description="HR Documents Vector Collection")
-            self.collection = Collection(name=self.collection_name, schema=schema)
+            except Exception as e:
+                logger.error(f"❌ Failed to load collection {name}: {e}")
 
-            index_params = {
-                "index_type": "IVF_FLAT",
-                "metric_type": "L2",
-                "params": {"nlist": 128}
-            }
-            self.collection.create_index(field_name="embedding", index_params=index_params)
-            logger.info(f"✅ Created new collection: {self.collection_name}")
-        except Exception as e:
-            logger.error(f"❌ Collection creation failed: {e}")
-            raise
+    # -------------------------------------------------------------
+    # CATEGORY ROUTING → COLLECTION
+    # -------------------------------------------------------------
+    def _resolve_collection(self, category: Optional[str]) -> Optional[Collection]:
+        if not category:
+            return self.collections.get("uncategorized")
 
-    # ------------------------ EMBEDDING OPERATIONS ------------------------
+        category = category.lower()
+
+        if "policy" in category:
+            return self.collections.get("hr_policy")
+        if "payroll" in category:
+            return self.collections.get("payroll")
+        if "it" in category or "tech" in category:
+            return self.collections.get("it_support")
+        if "facility" in category:
+            return self.collections.get("facilities")
+
+        return self.collections.get("uncategorized")
+
+    # -------------------------------------------------------------
+    # INSERT DOCUMENT CHUNKS + EMBEDDINGS
+    # -------------------------------------------------------------
     async def store_document_embeddings(
         self,
         file_id: str,
@@ -75,85 +98,118 @@ class MilvusClient:
         embeddings: List[List[float]],
         category: str
     ) -> int:
-        """Insert document embeddings into Milvus."""
+        """Insert document embeddings into the correct existing collection."""
         try:
-            # id is auto-generated, so we only insert the other 5 fields
-            data = [
-                [file_id] * len(embeddings),
-                [filename] * len(embeddings),
-                [content] * len(embeddings),
-                [category] * len(embeddings),
-                embeddings,  # already a list of lists
-            ]
+            col = self._resolve_collection(category)
+            if not col:
+                raise Exception(f"No collection found for category: {category}")
 
-            self.collection.insert(data)
-            self.collection.flush()
+            entities = []
+            for idx, emb in enumerate(embeddings):
+                entities.append([
+                    f"{file_id}_chunk_{idx}",     # id (VARCHAR)
+                    file_id,                      # file_id
+                    filename,                     # filename
+                    idx,                          # chunk_index
+                    category,                     # category
+                    content[:4000],               # text (limit)
+                    emb                           # embedding
+                ])
 
-            logger.info(f"✅ Stored {len(embeddings)} vectors for {filename}")
-            return len(embeddings)
+            col.insert(entities)
+            col.flush()
+
+            logger.info(f"✅ Inserted {len(entities)} embeddings into {col.name}")
+            return len(entities)
 
         except Exception as e:
-            logger.error(f"❌ Failed to store embeddings: {e}")
+            logger.error(f"❌ Insert failed: {e}")
             raise
 
-   
+    # -------------------------------------------------------------
+    # SEARCH SIMILARITY (RAG)
+    # -------------------------------------------------------------
     async def search_similar(
         self,
         query: str,
-        limit: int = 5,
-        category: Optional[str] = None
+        category: Optional[str],
+        limit: int = 5
     ) -> List[Dict[str, Any]]:
-        """Search similar documents using Gemini embeddings."""
+        """Search the correct HR category collection for similar chunks."""
         try:
-            query_embedding = lite_client.create_embedding(query)
-            search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
-            expr = f'category == "{category}"' if category else None
+            col = self._resolve_collection(category)
 
-            results = self.collection.search(
+            if not col:
+                logger.error(f"❌ No matching collection for category={category}")
+                return []
+
+            query_embedding = lite_client.create_embedding(query)
+
+            search_params = {
+                "metric_type": "COSINE",
+                "params": {"nprobe": 10}
+            }
+
+            results = col.search(
                 data=[query_embedding],
                 anns_field="embedding",
                 param=search_params,
                 limit=limit,
-                expr=expr,
-                output_fields=["file_id", "filename", "content", "category"]
+                output_fields=[
+                    "file_id", "filename", "text",
+                    "category", "chunk_index"
+                ]
             )
 
-            formatted_results = []
-            for hits in results:
-                for hit in hits:
-                    formatted_results.append({
-                        "file_id": hit.entity.get("file_id"),
-                        "filename": hit.entity.get("filename"),
-                        "content": hit.entity.get("content"),
-                        "category": hit.entity.get("category"),
-                        "score": hit.score
-                    })
+            formatted = []
+            for hit in results[0]:
+                formatted.append({
+                    "id": hit.id,
+                    "score": hit.score,
+                    "content": hit.entity.get("text"),
+                    "filename": hit.entity.get("filename"),
+                    "file_id": hit.entity.get("file_id"),
+                    "chunk_index": hit.entity.get("chunk_index"),
+                    "category": hit.entity.get("category"),
+                })
 
-            logger.info(f"✅ Found {len(formatted_results)} matches in category={category}")
-            return formatted_results
+            logger.info(f"🔍 Found {len(formatted)} matches in {col.name}")
+            return formatted
+
         except Exception as e:
             logger.error(f"❌ Search failed: {e}")
             return []
 
+    # -------------------------------------------------------------
+    # DELETE BY FILE
+    # -------------------------------------------------------------
     async def delete_by_file_id(self, file_id: str) -> int:
-        """Delete all vectors for a given file_id."""
-        try:
-            expr = f'file_id == "{file_id}"'
-            result = self.collection.delete(expr)
-            logger.info(f"🗑️ Deleted vectors for file_id={file_id}")
-            return result.delete_count
-        except Exception as e:
-            logger.error(f"❌ Delete failed: {e}")
-            return 0
+        """Delete all vectors across all collections for a file."""
+        deleted_total = 0
 
-    # ------------------------ STATS / TEST ------------------------
+        for col in self.collections.values():
+            try:
+                expr = f'file_id == "{file_id}"'
+                result = col.delete(expr)
+                deleted_total += result.delete_count
+                logger.info(f"🗑️ Deleted {result.delete_count} from {col.name}")
+
+            except Exception as e:
+                logger.error(f"❌ Delete failed in {col.name}: {e}")
+
+        return deleted_total
+
+    # -------------------------------------------------------------
+    # COLLECTION STATS
+    # -------------------------------------------------------------
     def get_collection_stats(self) -> Dict[str, Any]:
-        try:
-            stats = self.collection.num_entities
-            return {"total_vectors": stats, "collection": self.collection_name}
-        except Exception as e:
-            logger.error(f"❌ Failed to get stats: {e}")
-            return {"total_vectors": 0, "collection": self.collection_name}
+        stats = {}
+        for key, col in self.collections.items():
+            try:
+                stats[key] = col.num_entities
+            except:
+                stats[key] = 0
+        return stats
 
 
 milvus_client = MilvusClient()
