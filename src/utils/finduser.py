@@ -56,20 +56,23 @@ def get_token_info(token: str, verify: bool = False, secret: Optional[str] = Non
 
 
 def extract_user_info(token: str) -> Dict[str, Optional[Any]]:
-    """Convenience helper to extract common user fields from a token payload.
-
-    Returns a dict with keys commonly used for identity: `sub`, `user_id`,
-    `username`, `email`, `roles`, and the entire `claims`.
-    """
     info = get_token_info(token, verify=False)
     claims = info.get("payload") or {}
 
     return {
         "sub": claims.get("sub"),
         "user_id": claims.get("user_id") or claims.get("id"),
-        "username": claims.get("username") or claims.get("preferred_username") or claims.get("name"),
+        "username": (
+            claims.get("username")
+            or claims.get("preferred_username")
+            or claims.get("name")
+        ),
         "email": claims.get("email"),
         "roles": claims.get("roles") or claims.get("role") or claims.get("scope"),
+        
+        # NEW FIELD
+        "grade": claims.get("grade") or claims.get("user_grade") or claims.get("level"),
+
         "claims": claims,
     }
 
