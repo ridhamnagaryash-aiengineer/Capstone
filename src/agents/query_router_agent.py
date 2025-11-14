@@ -11,11 +11,11 @@ from config.prompts_loader import prompt_loader
 logger = logging.getLogger(__name__)
 
 
-# Same normalizer as documents
+# ---------------- CATEGORY NORMALIZER ----------------
 def normalize_category(raw: str) -> str:
     t = (raw or "").lower()
 
-    if "payroll" in t or "salary" in t:
+    if "payroll" in t or "salary" in t or "ctc" in t:
         return "payroll"
 
     if "facility" in t or "facilities" in t or "maintenance" in t:
@@ -24,12 +24,13 @@ def normalize_category(raw: str) -> str:
     if "it" in t or "tech" in t or "support" in t or "helpdesk" in t:
         return "it_support"
 
-    if "policy" in t or "hr" in t or "leave" in t:
+    if "policy" in t or "hr" in t or "leave" in t or "attendance" in t:
         return "hr_policy"
 
     return "uncategorized"
 
 
+# ---------------- QUERY STATE ----------------
 class QueryState(TypedDict):
     user_query: str
     chat_history: List[Dict]
@@ -45,6 +46,7 @@ class QueryState(TypedDict):
     user_info: Dict[str, Any]
 
 
+# ---------------- AGENT ----------------
 class QueryRouterAgent:
     def __init__(self):
         self.llm = lite_client
@@ -52,7 +54,7 @@ class QueryRouterAgent:
         self.templates = prompt_loader
         self.workflow = self._build()
 
-    # Build graph
+    # ---------------- GRAPH BUILD ----------------
     def _build(self):
         g = StateGraph(QueryState)
 
@@ -69,33 +71,34 @@ class QueryRouterAgent:
 
         return g.compile()
 
-    # ---------------- 1. classify ----------------
+    # ---------------- NODE 1: CLASSIFY QUERY ----------------
     def classify_query(self, state: QueryState) -> QueryState:
         state["current_node"] = "classify_query"
         try:
             prompt = self.templates["query_classification"].format(
                 query=state["user_query"]
             )
-            response = self.llm.chat_completion([{"role": "user", "content": prompt}])
+            response = self.llm.chat_completion(
+                [{"role": "user", "content": prompt}]
+            )
 
             raw_cat = "uncategorized"
             conf = 0.0
 
             for line in response.splitlines():
-                l = line.strip().lower()
-                if l.startswith("category:"):
-                    raw_cat = line.split(":", 1)[1].strip().lower()
-                elif l.startswith("confidence:"):
+                low = line.strip().lower()
+                if low.startswith("category:"):
+                    raw_cat = line.split(":", 1)[1].strip()
+                elif low.startswith("confidence:"):
                     try:
                         conf = float(line.split(":", 1)[1].strip())
                     except:
                         conf = 0.5
 
-            # **STRICT NORMALIZATION**
-            norm_cat = normalize_category(raw_cat)
-
-            state["query_category"] = norm_cat
+            # 🔥 strict normalizer to match Milvus collection names
+            state["query_category"] = normalize_category(raw_cat)
             state["confidence"] = conf
+
             return state
 
         except Exception as e:
@@ -104,65 +107,87 @@ class QueryRouterAgent:
             state["error"] = str(e)
             return state
 
-    # ---------------- 2. embedding ----------------
+    # ---------------- NODE 2: GENERATE EMBEDDING ----------------
     def generate_embedding(self, state: QueryState) -> QueryState:
         state["current_node"] = "generate_embedding"
         try:
-            state["query_embedding"] = self.llm.create_embedding(
-                state["user_query"]
-            )
+            state["query_embedding"] = self.llm.create_embedding(state["user_query"])
             return state
         except Exception as e:
             state["error"] = f"embedding_error: {e}"
             return state
 
-    # ---------------- 3. milvus search ----------------
+    # ---------------- NODE 3: SEARCH MILVUS ----------------
     async def search_milvus(self, state: QueryState) -> QueryState:
         state["current_node"] = "search_milvus"
         try:
             results = await self.db.search_similar(
                 query=state["user_query"],
-                category=state["query_category"],  # NOW ALWAYS VALID
+                category=state["query_category"],
                 limit=5,
             )
             state["retrieved_chunks"] = results
             return state
 
         except Exception as e:
-            state["error"] = str(e)
             state["retrieved_chunks"] = []
+            state["error"] = str(e)
             return state
 
-    # ---------------- 4. response ----------------
+    # ---------------- NODE 4: GENERATE RESPONSE ----------------
     def generate_response(self, state: QueryState) -> QueryState:
         state["current_node"] = "generate_response"
 
         try:
             docs = state["retrieved_chunks"]
-            user_context = ""
 
+            # ---------------- PERSONALIZATION ----------------
+            user_info = state.get("user_info") or {}
+            username = user_info.get("username") or "User"
+            grade = user_info.get("grade")
+
+            user_context = f"User Name: {username}.\n"
+            if grade:
+                user_context += f"User Grade: {grade}.\n"
+            user_context += (
+                "Always address the user by name, and adapt tone based on their grade.\n"
+                "Be warm, clear, and HR-friendly. Avoid jargon.\n"
+            )
+
+            # ---------------- FALLBACK: NO DOCUMENTS ----------------
             if not docs:
-                fallback = (
-                    f"User asked: {state['user_query']}\n"
-                    "No HR documents matched. Answer as per general HR knowledge."
+                fallback_prompt = (
+                    f"{user_context}\n"
+                    f"The user asked: '{state['user_query']}'.\n"
+                    "Answer helpfully using HR-best practices.\n"
+                    "Do NOT mention document retrieval or missing documents.\n"
                 )
-                out = self.llm.chat_completion([{"role": "user", "content": fallback}])
-                state["llm_response"] = out
+
+                answer = self.llm.chat_completion(
+                    [{"role": "user", "content": fallback_prompt}]
+                )
+
+                state["llm_response"] = answer
                 state["sources"] = []
                 state["success"] = True
                 return state
 
+            # ---------------- NORMAL RAG MODE ----------------
             context = "\n\n".join(
                 [f"[{d['filename']}]\n{d['content']}" for d in docs]
             )
 
-            prompt = self.templates["chat_response"].format(
+            template = self.templates["chat_response"]
+
+            prompt = template.format(
                 context=context,
                 question=state["user_query"],
                 user_context=user_context,
             )
 
-            answer = self.llm.chat_completion([{"role": "user", "content": prompt}])
+            answer = self.llm.chat_completion(
+                [{"role": "user", "content": prompt}]
+            )
 
             state["llm_response"] = answer
             state["sources"] = docs
@@ -174,11 +199,11 @@ class QueryRouterAgent:
             state["success"] = False
             return state
 
-    # Entrypoint
+    # ---------------- PUBLIC ENTRY ----------------
     async def process_query(self, user_query, chat_history, user_info=None):
         initial: QueryState = {
             "user_query": user_query,
-            "chat_history": chat_history,
+            "chat_history": chat_history or [],
             "query_category": "",
             "confidence": 0.0,
             "query_embedding": [],
