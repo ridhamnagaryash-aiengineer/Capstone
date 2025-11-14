@@ -20,7 +20,7 @@ class MilvusClient:
     def _connect(self):
         """Connect to Zilliz Cloud or local Milvus."""
         try:
-            uri = os.getenv("MILVUS_URI", "https://in03-ee999fd2b04c662.serverless.aws-eu-central-1.cloud.zilliz.com")
+            uri = os.getenv("MILVUS_URI", "https://in03-28f34bee2591c4c.serverless.aws-eu-central-1.cloud.zilliz.com")
             token = os.getenv("MILVUS_API_KEY", "")
             connections.connect(alias="default", uri=uri, token=token)
             logger.info("✅ Connected to Zilliz/Milvus successfully")

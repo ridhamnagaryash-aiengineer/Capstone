@@ -148,26 +148,41 @@ class QueryRouterAgent:
     # -------------------------------------------------
     def generate_response(self, state: QueryState) -> QueryState:
         state["current_node"] = "generate_response"
+
         try:
             docs = state["retrieved_chunks"]
 
+            # -------------------------------------------------
+            # 🔥 FALLBACK: No documents found → use personalization
+            # -------------------------------------------------
             if not docs:
-                state["llm_response"] = (
-                    f"No documents found for category '{state['query_category']}'."
+                user_context = self._format_user_context(state.get("user_info"))
+
+                fallback_prompt = (
+                    f"{user_context}\n"
+                    f"The user asked: '{state['user_query']}'.\n"
+                    "No HR policy documents were retrieved, so answer using ONLY the user information above.\n"
+                    "If the user asks for their name, use the name in the user context.\n"
+                    "Do NOT say anything about missing documents.\n"
                 )
+
+                answer = self.llm.chat_completion([
+                    {"role": "user", "content": fallback_prompt}
+                ])
+
+                state["llm_response"] = answer
                 state["sources"] = []
                 state["success"] = True
                 return state
 
-            # Build knowledge context
+            # -------------------------------------------------
+            # NORMAL RAG MODE
+            # -------------------------------------------------
             context = "\n\n".join(
                 [f"[{d['filename']}]\n{d['content']}" for d in docs]
             )
 
-            # PERSONALIZATION LAYER
             user_context = self._format_user_context(state.get("user_info"))
-
-            # Prompt template
             template = self.templates.get("chat_response")
 
             prompt = template.format(
