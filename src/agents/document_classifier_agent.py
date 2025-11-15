@@ -29,20 +29,22 @@ def normalize_category(raw: str) -> str:
     ]):
         return "payroll"
 
+    # FACILITIES
+    if any(x in t for x in [
+        "facility", "facilities", "facility management", 
+        "office facility", "office facilities",
+        "maintenance", "building", "premises", 
+        "canteen", "cafeteria", "workplace", "office admin"
+    ]):
+        return "facilities"
+
     # IT SUPPORT
     if any(k in t for k in [
         "it", "tech", "technical", "support", "helpdesk",
         "laptop", "vpn", "email", "hardware", "software", "reset"
     ]):
         return "it_support"
-
-    # FACILITIES
-    if any(k in t for k in [
-        "facility", "facilities", "maintenance", "office",
-        "building", "cleaning", "canteen", "cafeteria",
-        "workplace", "premises"
-    ]):
-        return "facilities"
+    
 
     return "uncategorized"
 
@@ -138,6 +140,8 @@ class DocumentClassifierAgent:
 
             state["category"] = normalized
             state["confidence"] = confidence
+            logger.error(f"[CLASSIFIER DEBUG] RAW='{raw_category}' → NORMALIZED='{normalized}' → CONF={confidence}")
+
             return state
 
         except Exception as e:
@@ -211,6 +215,7 @@ class DocumentClassifierAgent:
 
         final = self.workflow.invoke(initial)
         return final
+
 
 
 document_classifier_agent = DocumentClassifierAgent()

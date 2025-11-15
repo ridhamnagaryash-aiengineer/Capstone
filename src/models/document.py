@@ -1,4 +1,4 @@
-# app/models/document.py or src/models/document.py
+# src/models/document.py
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Text, Enum as SQLEnum
 from sqlalchemy.sql import func

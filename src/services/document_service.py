@@ -207,13 +207,16 @@ class DocumentService:
                 raise Exception("No embeddings generated")
 
             # SINGLE CALL INSERT — ALL EMBEDDINGS AT ONCE
+            # pass per-chunk texts so Milvus stores correct chunk content (not full PDF repeated)
             total_vectors = await self.milvus.store_document_embeddings(
                 file_id=file_id,
                 filename=file.filename,
                 content=content,
                 embeddings=embeddings,
-                category=category
+                category=category,
+                chunks=chunks
             )
+
 
             # Update DB record
             doc.category = DocumentCategory(category)

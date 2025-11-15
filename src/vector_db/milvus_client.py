@@ -1,14 +1,19 @@
+# src/vector_db/milvus_client.py
 import os
 from dotenv import load_dotenv
 load_dotenv()
 import logging
 from typing import List, Dict, Any, Optional
-from pymilvus import connections, Collection, utility
+from pymilvus import (
+    connections, FieldSchema, CollectionSchema,
+    DataType, Collection, utility
+)
 
 from ..llm.lite_client import lite_client
 
 logger = logging.getLogger(__name__)
 
+# FIXED CATEGORY → COLLECTION NAME MAP
 COLLECTIONS = {
     "hr_policy": "hrms_hr_policy",
     "payroll": "hrms_payroll",
@@ -17,52 +22,97 @@ COLLECTIONS = {
     "uncategorized": "hrms_uncategorized"
 }
 
+DIMENSION = 768  # embedding dim from Gemini
+
+
 class MilvusClient:
     def __init__(self):
-        self.dim = 768
         self.collections: Dict[str, Collection] = {}
         self._connect()
-        self._load_collections()
+        self._ensure_all_collections()
 
     def _connect(self):
         uri = os.getenv("MILVUS_URI")
         token = os.getenv("MILVUS_API_KEY")
 
         if not uri or not token:
-            raise RuntimeError("MILVUS_URI or MILVUS_API_KEY missing from environment")
+            raise RuntimeError("MILVUS_URI or MILVUS_API_KEY missing")
 
         connections.connect(alias="default", uri=uri, token=token)
         logger.info("Connected to Milvus")
 
-    def _load_collections(self):
+    def _make_schema(self):
+        return CollectionSchema(
+            fields=[
+                FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=100),
+                FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=100),
+                FieldSchema(name="filename", dtype=DataType.VARCHAR, max_length=255),
+                FieldSchema(name="chunk_index", dtype=DataType.INT64),
+                FieldSchema(name="category", dtype=DataType.VARCHAR, max_length=50),
+                FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=4096),
+                FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION),
+            ],
+            description="HRMS Vector Store"
+        )
+
+    def _ensure_all_collections(self):
+        schema = self._make_schema()
+
         for key, name in COLLECTIONS.items():
-            try:
-                if utility.has_collection(name):
-                    col = Collection(name)
-                    col.load()
-                    self.collections[key] = col
-                    logger.info(f"Loaded collection: {name}")
-                else:
-                    logger.warning(f"Collection not found in Milvus: {name}")
-            except Exception as e:
-                logger.exception(f"Failed loading collection {name}: {e}")
+            if not utility.has_collection(name):
+                logger.info(f"Creating collection {name} ...")
+                col = Collection(name, schema)
+                col.create_index(
+                    field_name="embedding",
+                    index_params={"metric_type": "COSINE", "index_type": "IVF_FLAT", "params": {"nlist": 1024}}
+                )
+                logger.info(f"Created + Indexed collection: {name}")
+            else:
+                col = Collection(name)
+
+            col.load()
+            self.collections[key] = col
+            logger.info(f"Ready collection: {name}")
 
     def _resolve(self, category: Optional[str]):
-        key = (category or "uncategorized").lower()
-        # map some potential variants to keys (defensive)
-        if key in ["hr", "hr_policy", "policy", "policies"]:
-            key = "hr_policy"
-        elif key in ["payroll", "salary", "compensation"]:
-            key = "payroll"
-        elif key in ["it", "it_support", "tech", "helpdesk", "support"]:
-            key = "it_support"
-        elif key in ["facility", "facilities", "maintenance", "cafeteria"]:
-            key = "facilities"
+        """
+        Resolve incoming category to correct Milvus collection. 
+        Facilities is checked BEFORE IT support to avoid conflicts like 'facility support'.
+        """
+        if not category:
+            cat = "uncategorized"
         else:
-            key = "uncategorized"
+            cat = str(category).lower().strip()
 
-        col = self.collections.get(key)
-        return key, col
+        # ---- FACILITIES FIRST (Priority Fix) ----
+        if any(x in cat for x in [
+            "facility", "facilities", "facility management",
+            "office facility", "workplace facility",
+            "building maintenance", "maintenance",
+            "premises", "canteen", "cafeteria", "workplace"
+        ]):
+            resolved = "facilities"
+
+        # ---- PAYROLL ----
+        elif any(x in cat for x in ["payroll", "salary", "compensation", "ctc"]):
+            resolved = "payroll"
+
+        # ---- HR POLICY ----
+        elif any(x in cat for x in ["hr", "policy", "policies", "leave", "attendance", "probation"]):
+            resolved = "hr_policy"
+
+        # ---- IT SUPPORT (now after facilities) ----
+        elif any(x in cat for x in ["it", "tech", "technical", "helpdesk", "support", "vpn", "laptop"]):
+            resolved = "it_support"
+
+        # ---- DEFAULT ----
+        else:
+            resolved = "uncategorized"
+
+        col = self.collections.get(resolved)
+        return resolved, col
+
+
 
     async def store_document_embeddings(
         self,
@@ -71,64 +121,74 @@ class MilvusClient:
         content: str,
         embeddings: List[List[float]],
         category: Optional[str],
+        chunks: Optional[List[str]] = None,   # <-- NEW optional param
     ) -> int:
+
         key, col = self._resolve(category)
         if not col:
-            raise Exception(f"No collection for category: {key}")
+            raise RuntimeError(f"No collection found for category {key}")
 
-        entities = []
+        ids = []
+        file_ids = []
+        filenames = []
+        chunk_indexes = []
+        categories = []
+        texts = []
+        vectors = []
+
         for idx, emb in enumerate(embeddings):
-            entities.append([
-                f"{file_id}_chunk_{idx}",
-                file_id,
-                filename,
-                idx,
-                category or key,
-                content[:4000],
-                emb
-            ])
+            ids.append(f"{file_id}_chunk_{idx}")
+            file_ids.append(file_id)
+            filenames.append(filename)
+            chunk_indexes.append(idx)
+            categories.append(key)
 
-        col.insert(entities)
+            # Use per-chunk text if provided; otherwise fall back to content[:4000]
+            if chunks and idx < len(chunks):
+                chunk_text = chunks[idx][:4000]
+            else:
+                chunk_text = content[:4000]
+
+            texts.append(chunk_text)
+            vectors.append(emb)
+
+        data = [ids, file_ids, filenames, chunk_indexes, categories, texts, vectors]
+
+        col.insert(data)
         col.flush()
-        logger.info(f"Inserted {len(entities)} vectors into {col.name}")
-        return len(entities)
 
-    async def search_similar(
-        self,
-        query: str,
-        category: Optional[str],
-        limit: int = 5
-    ) -> List[Dict[str, Any]]:
+        logger.info(f"Inserted {len(embeddings)} vectors → {col.name}")
+        return len(embeddings)
+
+    async def search_similar(self, query: str, category: Optional[str], limit: int = 5):
         key, col = self._resolve(category)
+
         if not col:
-            logger.warning(f"search_similar: no collection resolved for category={category} (resolved key={key})")
+            logger.warning(f"No collection resolved for category={category}")
             return []
 
-        # create embedding (sync client)
         query_emb = lite_client.create_embedding(query)
-        if not query_emb or len(query_emb) == 0:
-            logger.warning("search_similar: got empty query embedding")
+        if not query_emb:
             return []
 
-        search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
         try:
             results = col.search(
                 data=[query_emb],
                 anns_field="embedding",
-                param=search_params,
+                param={"metric_type": "COSINE", "params": {"nprobe": 10}},
                 limit=limit,
                 output_fields=["file_id", "filename", "text", "category", "chunk_index"]
             )
         except Exception as e:
-            logger.exception(f"Milvus search error on {col.name}: {e}")
+            logger.error(f"Milvus search error: {e}")
             return []
 
-        output = []
-        # results is list of hits lists: results[0]
         hits = results[0] if results else []
+        out = []
+
         for hit in hits:
             ent = hit.entity
-            output.append({
+            out.append({
                 "id": hit.id,
                 "score": float(hit.score),
                 "content": ent.get("text"),
@@ -136,13 +196,11 @@ class MilvusClient:
                 "file_id": ent.get("file_id"),
                 "chunk_index": ent.get("chunk_index"),
                 "category": ent.get("category") or key,
-                "collection": col.name
+                "collection": col.name,
             })
 
-        logger.info(f"search_similar: found {len(output)} hits in collection {col.name} for key={key}")
-        return output
+        return out
 
 
-# singleton
 milvus_client = MilvusClient()
 

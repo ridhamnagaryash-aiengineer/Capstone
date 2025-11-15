@@ -24,16 +24,21 @@ async def upload_document(
         background_tasks=background_tasks
     )
 
-@admin_router.get("/documents", response_model=HRDocumentList)  
+@admin_router.get("/documents", response_model=HRDocumentList)
 async def list_documents(
     current_user = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """Get all documents"""
-    return await document_service.get_user_documents(
-        user_id=current_user.id, 
+    docs = await document_service.get_user_documents(
+        user_id=current_user.id,
         db=db
     )
+
+    return {
+        "total": len(docs),
+        "documents": docs
+    }
+
 
 @admin_router.delete("/documents/{file_id}")
 async def delete_document(
