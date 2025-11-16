@@ -1,240 +1,378 @@
-# Capstone
-HRMS Application for Capstone
-# HR Assistant System (FastAPI + Gemini + Milvus + LangGraph)
+🧠 HRMS AI Assistant — Intelligent HR Chat + Document RAG Pipeline
+A Production-Grade HR Management System Powered by LLMs, Milvus Vector DB, and FastAPI
 
-AI-powered HR knowledge system with:
+🚀 Overview
+The HRMS AI Assistant is an enterprise-grade HR Management System that combines:
 
-- HR Document Upload & Auto-Classification  
-- Embedding Generation (Google Gemini Embeddings)  
-- Vector Search (Milvus/Zilliz Cloud)  
-- HR Assistant Chatbot with RAG  
-- Role-based Authentication (Admin / Employee)  
-- Chat History & Audit Logging  
-- Local Document Storage  
+FastAPI for secure backend APIs
+LiteLLM for unified LLM access (Gemini, OpenAI, Claude, Groq, etc.)
+Milvus Vector Database for high-performance embedding storage
+RAG engine for document-grounded HR responses
+Role-based authentication for Admin and Employees
+Automated Document Ingestion Pipeline (upload → extract → classify → chunk → embed → store)
+LiveKit Integration for voice-based HR assistant interactions
 
----
+This system enables:
+✔ Employees to ask HR queries conversationally
+✔ Admins to upload and manage HR documents
+✔ Real-time semantic search from vector DB
+✔ Automatic policy routing (payroll/hr/it/support/facilities)
+✔ Persistent chat sessions
+✔ Full monitoring & logging
+✔ Voice-based interactions via LiveKit
 
-## 🔧 Tech Stack
+🏗️ Features
+🎯 Employee Features
 
-| Feature | Tech |
-|--------|------|
-| API | FastAPI |
-| LLM | Google Gemini |
-| Embeddings | `models/embedding-001` |
-| Vector DB | Milvus / Zilliz Cloud |
-| Workflow Engine | LangGraph |
-| Auth | JWT (HS256) |
-| DB | SQLite / PostgreSQL |
-| ORM | SQLAlchemy |
-| File Parsing | PyPDF2, python-docx |
+Ask HR-related questions through an intelligent chat interface
+Personalized responses based on JWT metadata (username, grade, role)
+RAG-powered answers grounded in company HR documents
+Follow-up questions with chat context
+View chat history, rename sessions, delete sessions
+Voice-based queries through LiveKit integration
 
----
+🛠️ Admin Features
 
-## 📁 Project Structure
+Upload HR documents (PDF/DOC/DOCX/TXT)
+Automatic text extraction (PDF → plain text)
+LLM-driven document classification
+Smart chunking & embedding generation
+Storage in category-specific Milvus collections
+View documents with classification metadata
+Delete documents (including Milvus vectors)
 
-hr-system/
-├── src/
-│ ├── api/main.py
-│ ├── agents/
-│ ├── routes/
-│ ├── services/
-│ ├── models/
-│ ├── schemas/
-│ ├── vector_db/
-│ ├── llm/
-│ ├── core/
-│ └── config/
-├── uploads/
+🤖 AI/LLM Features
+
+Unified LLM interface via LiteLLM
+Gemini / GPT / Claude support (switchable via env)
+Safe fallback answers when no relevant vectors
+Prompt templates loaded from YAML
+
+🎙️ Voice Integration Features
+
+LiveKit real-time voice communication
+Voice-to-text HR query processing
+Text-to-speech response delivery
+Seamless integration with RAG pipeline
+Natural conversation flow with voice agent
+
+🗃️ Vector Database
+Five Milvus collections:
+
+hrms_hr_policy
+hrms_payroll
+hrms_it_support
+hrms_facilities
+hrms_uncategorized
+
+Optimized for:
+
+semantic search
+category-level isolation
+low latency
+
+
+🧩 Project Architecture
+hrms-ai-assistant/
+│
 ├── config/
-│ ├── app_config.yaml
-│ ├── model_config.yaml
-│ └── prompt_templates.yaml
-└── README.md
+│   ├── app_config.yaml
+│   ├── model_config.yaml
+│   └── prompts_templates.yaml
+│
+├── src/
+│   ├── agents/
+│   │   ├── document_classifier_agent.py
+│   │   └── query_router_agent.py
+│   │
+│   ├── core/
+│   │   ├── database.py
+│   │   └── security.py
+│   │
+│   ├── handlers/
+│   │   └── error_handler.py
+│   │
+│   ├── llm/
+│   │   └── lite_client.py   ← LiteLLM wrapper
+│   │
+│   ├── models/
+│   │   ├── chat.py
+│   │   ├── document.py
+│   │   └── user.py
+│   │
+│   ├── prompt_engineering/
+│   │   └── prompts_loader.py
+│   │
+│   ├── retriever/
+│   │   └── hr_retriever.py
+│   │
+│   ├── routes/
+│   │   ├── admin.py
+│   │   ├── auth.py
+│   │   └── employee.py
+│   │
+│   ├── schemas/
+│   │   ├── chat.py
+│   │   ├── document.py
+│   │   └── user.py
+│   │
+│   ├── services/
+│   │   ├── chat_service.py
+│   │   ├── document_service.py
+│   │   └── user_service.py
+│   │
+│   ├── utils/
+│   │   ├── email.py
+│   │   └── finduser.py
+│   │
+│   └── vector_db/
+│       └── milvus_client.py
+│
+├── uploads/   ← Stored PDFs
+├── create_admin.py
+├── main.py
+├── voice_agent.py
+└── requirements.txt
 
-yaml
-Copy code
+🔌 System Architecture Diagram
+          ┌───────────────────────────┐
+          │         Employee          │
+          └──────────────┬────────────┘
+                         │
+                ┌────────┴────────┐
+                │                 │
+                ▼                 ▼
+      ┌──────────────────┐  ┌──────────────────┐
+      │  Employee Route  │  │  LiveKit Voice   │
+      └───────┬──────────┘  └────────┬─────────┘
+              │                      │
+              │                      ▼
+              │            ┌──────────────────┐
+              │            │  Voice Agent     │
+              │            └────────┬─────────┘
+              │                     │
+              └──────────┬──────────┘
+                         ▼
+              ┌────────────────────┐
+              │    Chat Service    │
+              └─────────┬──────────┘
+                        │
+                        ▼
+             ┌──────────────────────┐
+             │ Query Router Agent   │
+             └──────┬──────────────┘
+                    │
+        ┌────────────────────┐
+        │  LiteLLM Client    │
+        └──────┬────────────┘
+               │
+               ▼
+       ┌───────────────────────┐
+       │   Vector Retriever     │
+       └─────────┬─────────────┘
+                 │
+                 ▼
+      ┌───────────────────────────┐
+      │     Milvus Vector DB      │
+      └───────────────────────────┘
 
----
+📥 Document Ingestion Pipeline
+Admin → Upload Document
+        │
+        ▼
+[DocumentService]
+1. Validate file
+2. Extract content (PDF → text)
+3. Classify via LLM
+4. Normalize category
+5. Chunk text
+6. Generate embeddings
+7. Store vectors into Milvus category collection
+8. Update DB metadata
 
-# 🚀 Features Overview
+🔧 Setup Instructions
+1️⃣ Clone repository
+bashgit clone https://github.com/your-repo/hrms-ai-assistant.git
+cd hrms-ai-assistant
+2️⃣ Create virtual environment (Anaconda)
+bashconda create -n hrms python=3.10 -y
+conda activate hrms
+3️⃣ Install dependencies
+bashpip install -r requirements.txt
+4️⃣ Configure environment variables
+Create .env:
+bash# LLM Keys (Gemini / GPT / Claude supported)
+GEMINI_API_KEY=xxxxxxxxxxxx
 
-## Admin Features
-- Upload HR documents (PDF, DOCX, TXT)
-- Auto content extraction
-- Auto classification → `payroll` / `hr_policy` / `it_support` / `facilities`
-- Auto chunking + embedding generation
-- Store vectors in Milvus
-- View and delete uploaded documents
+# LiteLLM model routing
+LLM_MODEL=gemini/gemini-1.5-flash
+EMBED_MODEL=gemini/text-embedding-004
 
-## Employee Features
-- Secure login
-- HR chatbot with RAG-based answers
-- Chat history stored per session
+# Milvus
+MILVUS_URI=https://example.api.zillizcloud.com
+MILVUS_API_KEY=xxxxxxxxxxxx
 
-## Intelligence Pipeline
-- LangGraph document workflow
-- LangGraph query workflow
-- Prompt templates loaded from YAML
-- Gemini for classification, embeddings, and responses
+# JWT
+SECRET_KEY=supersecretkey
+ALGORITHM=HS256
 
----
+# DB
+DATABASE_URL=sqlite:///./hr_system.db
+5️⃣ Start Server
+bashuvicorn main:app --reload
 
-# 🔐 Authentication & Authorization
+🔐 Authentication
+Roles
 
-JWT payload includes:
+admin
+employee
 
-sub: user email (required)
+JWT Payload Includes
+
 email
-role: "admin" | "employee"
-grade
 username
 full_name
+grade
+role
 
-yaml
-Copy code
+Admin-only routes:
 
-## Role Rules
+/admin/documents
 
-| Endpoint | Allowed |
-|----------|---------|
-| `/auth/*` | Public |
-| `/admin/*` | Admin only |
-| `/employee/*` | Employee or Admin |
+Employee-only:
 
-Admins must be manually created or promoted.
-
----
-
-# ⚙️ Environment Variables
-
-Create `.env`:
-
-SECRET_KEY=your-secret
-DATABASE_URL=sqlite:///./hr_system.db
-
-GEMINI_API_KEY=your_key_here
-
-MILVUS_URI=<zilliz_cloud_uri>
-MILVUS_API_KEY=<zilliz_key>
-
-yaml
-Copy code
-
----
-
-# 📦 Installation & Running
-
-### 1. Create virtual environment
-
-python -m venv .venv
-source .venv/bin/activate # Windows: .venv\Scripts\activate
+/employee/chat
 
 
+📚 API Documentation
+After running server:
+👉 Swagger UI
+http://localhost:8000/docs
+👉 ReDoc
+http://localhost:8000/redoc
 
-### 2. Install dependencies
+💬 Chat Workflow
+Request
+httpPOST /employee/chat
+Authorization: Bearer <token>
 
-pip install -r requirements.txt
+{
+  "message": "What is the leave policy?",
+  "session_id": null
+}
+Response
+json{
+  "session_id": "uuid-1234",
+  "response": "Based on policy...",
+  "sources": [...],
+  "category": "hr_policy",
+  "confidence": 0.95
+}
+
+🗄️ Document Workflow
+Upload Document
+httpPOST /admin/documents
+file: <PDF>
+Response
+json{
+  "id": 1,
+  "file_id": "uuid",
+  "category": "payroll",
+  "vector_count": 23,
+  "processing_status": "completed"
+}
+
+🧠 RAG Architecture
+Query classification:
+
+LLM categorizes user question
+Normalized to one of:
+
+hr_policy
+payroll
+it_support
+facilities
+uncategorized
 
 
-### 3. Create `.env`
 
-cp .env.example .env
+Semantic Search:
+
+Query embedding via LiteLLM
+Search within single Milvus category collection
+Retrieve top-k chunks
+Feed to LLM with context
+
+Fallback:
+
+If no chunks:
+
+LLM uses internal HR knowledgebase template
 
 
 
-### 4. Run FastAPI server
 
-uvicorn 
-main:app 
+🔍 Milvus Schema
+Each collection stores:
+FieldTypePurposeidint64Vector IDfile_idstringDocument IDfilenamestringOriginal filenamechunk_indexintChunk numbercategorystringNormalized categorytextstringChunk textembeddingfloat vector768-dim embedding
+
+🧩 LiteLLM Integration
+LiteLLM provides:
+
+provider-agnostic API
+automatic key loading (GEMINI_API_KEY)
+same interface for GPT, Claude, Gemini
+future-proof model switching
+
+Used for:
+
+Chat completions
+Embedding generation
+Model routing via YAML or .env
 
 
-API docs:
+🛡️ Security
+✔ JWT Authentication
+✔ Role-based access control
+✔ Safe file uploads
+✔ SQLAlchemy ORM protection
+✔ No hardcoded keys
+✔ Config in environment + YAML
 
-http://localhost:8001/docs
+🧪 Testing
+bashpytest -q
+Unit tests for:
 
-yaml
-Copy code
+document extraction
+chunking
+LLM classification
+embedding generation
+Milvus search behavior
 
----
 
-# 📘 API Endpoints
+📈 Performance Considerations
 
-## Auth
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/auth/signup` | Create employee |
-| POST | `/auth/login` | Login + JWT |
-| GET | `/auth/me` | Get current user |
+Collections isolated per category → faster search
+Chunk size 1000, stride 800 → optimal for HR policy text
+IVF_FLAT or HNSW indexing recommended
+LiteLLM caching optional
+Lazy loading for classifier prompts
 
-## Admin
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/admin/documents` | Upload HR document |
-| GET | `/admin/documents` | List documents |
-| DELETE | `/admin/documents/{file_id}` | Delete document |
 
-## Employee
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/employee/chat` | Ask HR assistant |
+🧭 Future Enhancements
 
----
+Admin UI for editing classifications
+Automatic document re-processing
+Reranking model (Cross encoder)
+Hybrid search (keyword + vector)
+Reinforcement-based answer optimization
 
-# 🧠 Document Processing Pipeline
 
-1. File uploaded  
-2. Content extracted (PDF/DOCX/TXT)  
-3. LangGraph workflow runs:
-   - extract_content  
-   - classify_document  
-   - generate_embeddings  
-4. Embeddings stored in Milvus  
-5. DB updated with:
-   - category  
-   - confidence  
-   - vector_count  
+🏁 Conclusion
+This project is a fully production-ready HRMS AI backend, combining:
 
----
-
-# 🗣️ Chat Pipeline
-
-1. Query classified  
-2. Embedding generated  
-3. Milvus vector search performed  
-4. Relevant chunks assembled  
-5. Gemini generates final answer  
-6. Message stored in DB with:
-   - category  
-   - confidence  
-   - retrieved chunks  
-   - sources  
-
----
-
-# 🔍 Debugging Tips
-
-### Check Milvus connection:
-GET /health
-
-yaml
-Copy code
-
-### Trace prompt templates:
-Enable debug logs in `prompt_loader.py`.
-
-### JWT fails?
-Ensure `"sub"` exists and `"role"` is stored as string.
-
----
-
-# 🤝 Contributing
-
-PRs welcome.  
-Use `black` + `isort` for formatting.
-
----
-
-# 📄 License
-
-Proprietary – internal use only.
-
+intelligent document understanding
+stateful chat assistant
+high-performance vector search
+modular architecture
+enterprise security

@@ -5,7 +5,7 @@ from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, END
 
 from src.llm.lite_client import lite_client
-from config.prompts_loader import prompt_loader
+from src.prompts_engineering.prompts_loader import prompt_loader
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

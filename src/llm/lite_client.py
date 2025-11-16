@@ -1,90 +1,108 @@
 from dotenv import load_dotenv
 load_dotenv()
-
+ 
 import logging
 import os
 from typing import List, Dict
-import google.generativeai as genai
-
+ 
+from litellm import completion, embedding
+ 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-
+ 
+ 
 class LiteLLMClient:
     """
-    Unified LLM client using ONLY Gemini:
-      - Chat = Gemini 1.5 Flash
-      - Embeddings = models/embedding-001
-
-    No transformers, no torch, no sentence-transformers.
+    LiteLLM-powered unified client.
+ 
+    Structure mirrors your old Gemini client:
+    - Chat
+    - Embeddings
+    - Dimension helper
+    - Same public API
+    - Same function ordering
+    - No import changes in project
     """
-
+ 
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is missing.")
-
-        genai.configure(api_key=api_key)
-
-        # Chat model
-        self.chat_model = genai.GenerativeModel("gemini-2.5-flash")
-
-        logger.info("✅ LiteLLMClient initialized with Gemini chat + embeddings")
-
-    # ---------------------------------------------------------
-    #                     CHAT COMPLETION
-    # ---------------------------------------------------------
+        # Read environment models (backward compatible)
+        self.chat_model = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash-lite")
+        self.embed_model = os.getenv("EMBED_MODEL", "gemini/text-embedding-004")
+ 
+        # Info logs like before
+        logger.info("===============================================")
+        logger.info(" LiteLLMClient initialized ")
+        logger.info(f" Chat Model = {self.chat_model}")
+        logger.info(f" Embedding Model = {self.embed_model}")
+        logger.info("===============================================")
+ 
+    # ----------------------------------------------------------------------
+    #                          CHAT COMPLETION
+    # ----------------------------------------------------------------------
     def chat_completion(self, messages: List[Dict]) -> str:
         """
-        Chat using Gemini 1.5 Flash.
-        Input messages = [{"role": ..., "content": ...}, ...]
+        Equivalent to old Gemini chat_completion.
+        Uses LiteLLM under the hood.
         """
         try:
-            # Convert messages to a single prompt
-            user_prompt = messages[-1]["content"] if messages else ""
-
-            response = self.chat_model.generate_content(user_prompt)
-            txt = response.text if hasattr(response, "text") else str(response)
-
-            return txt.strip()
-
+            if not messages:
+                return ""
+ 
+            # last user message is still supported
+            response = completion(
+                model=self.chat_model,
+                messages=messages,
+            )
+ 
+            # Extract text
+            output = response["choices"][0]["message"]["content"]
+            if not isinstance(output, str):
+                output = str(output)
+ 
+            return output.strip()
+ 
         except Exception as e:
-            logger.error(f"❌ Gemini chat failed: {e}")
+            logger.error(f"❌ LiteLLM chat_failed: {e}")
             return f"Chat error: {e}"
-
-    # ---------------------------------------------------------
-    #                      EMBEDDINGS
-    # ---------------------------------------------------------
+ 
+    # ----------------------------------------------------------------------
+    #                               EMBEDDINGS
+    # ----------------------------------------------------------------------
     def create_embedding(self, text: str) -> List[float]:
         """
-        Generate embeddings using Gemini models/embedding-001
+        Equivalent to old Gemini embedContent.
+        Now uses LiteLLM embedding API.
         """
         try:
-            text = text[:16000]  # safety trim
-            result = genai.embed_content(
-                model="models/embedding-001",
-                content=text,
-                task_type="retrieval_document",
+            # Safety trim preserved
+            safe_text = text[:16000] if isinstance(text, str) else str(text)
+ 
+            response = embedding(
+                model=self.embed_model,
+                input=safe_text
             )
-
-            emb = result.get("embedding")
-            if not emb:
-                raise RuntimeError("Gemini returned no embedding.")
-
+ 
+            emb = response["data"][0]["embedding"]
             return emb
-
+ 
         except Exception as e:
-            logger.error(f"❌ Embedding failed: {e}")
+            logger.error(f"❌ LiteLLM embedding_failed: {e}")
             raise RuntimeError(f"Embedding failed: {e}")
-
-    # ---------------------------------------------------------
-    #               HELPER — GET EMBEDDING DIMENSION
-    # ---------------------------------------------------------
+ 
+    # ----------------------------------------------------------------------
+    #                      DIMENSION HELPER
+    # ----------------------------------------------------------------------
     def get_embedding_dim(self) -> int:
-        """Quick dimension check."""
-        emb = self.create_embedding("test")
-        return len(emb)
-
-
-# Singleton
+        """
+        Same utility function:
+        quick embedding dimension probe.
+        """
+        try:
+            emb = self.create_embedding("dimension probe")
+            return len(emb)
+        except Exception:
+            return 0
+ 
+ 
+# Singleton instance
 lite_client = LiteLLMClient()
