@@ -1,4 +1,4 @@
-# requirements.txt - Updated for LiteLLM
+# requirements.txt
 fastapi
 uvicorn[standard]
 sqlalchemy
@@ -20,3 +20,4 @@ pymilvus
 pydantic[email]
 google-generativeai
 pymupdf
+psycopg2-binary
