@@ -1,30 +1,35 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
 load_dotenv()
-# Read DATABASE_URL and strip surrounding quotes if any (dotenv may keep quotes)
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
-if SQLALCHEMY_DATABASE_URL:
-    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.strip().strip('"').strip("'")
-else:
-    raise RuntimeError("DATABASE_URL environment variable is not set")
+database_url=os.getenv("DATABASE_URL")
 
-# Use sqlite-specific connect_args when sqlite is used, otherwise use defaults for PostgreSQL
-if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        SQLALCHEMY_DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        pool_pre_ping=True,
-    )
-else:
-    engine = create_engine(
-        SQLALCHEMY_DATABASE_URL,
-        pool_pre_ping=True,
-    )
+# Remove SQLite-specific options for Postgres
+connect_args = {}
+engine_args = {}
 
+# If SQLite → allow single-thread
+if database_url.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+    engine_args["connect_args"] = connect_args
+else:
+    # Postgres (Supabase) → standard pooling
+    # DON'T use StaticPool here
+    engine_args["pool_pre_ping"] = True
+
+# Create engine
+engine = create_engine(
+    database_url,
+    echo=os.getenv("DEBUG", "False").lower() == "true",
+    **engine_args
+)
+
+# Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# ORM base
 Base = declarative_base()
 
 
