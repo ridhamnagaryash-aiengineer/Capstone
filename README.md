@@ -376,3 +376,5 @@ stateful chat assistant
 high-performance vector search
 modular architecture
 enterprise security
+
+uv run voice_agent.py start

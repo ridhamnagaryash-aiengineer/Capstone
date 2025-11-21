@@ -20,3 +20,5 @@ pymilvus
 pydantic[email]
 google-generativeai
 pymupdf
+livekit
+livekit-api
