@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
 load_dotenv()
-database_url=load_dotenv().get("DATABASE_URL")
+database_url=os.getenv("DATABASE_URL")
 
 # Remove SQLite-specific options for Postgres
 connect_args = {}
