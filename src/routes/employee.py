@@ -4,7 +4,7 @@ from datetime import datetime
 import uuid
 import json
 import logging
-from typing import List
+from typing import List, Optional
 
 from src.core.database import get_db
 from src.core.security import get_current_active_user, get_current_employee
@@ -339,3 +339,102 @@ async def summarize_pdf(
         "summary": "To be implemented",
         "processed_by": current_user.email
     }
+
+@emp_router.get("/chat/sessions", response_model=List[ChatSessionResponse])
+async def get_chat_sessions(
+    session_type: Optional[str] = None,  # NEW: Filter by 'text' or 'voice'
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Return list of sessions for current user with:
+      - message_count
+      - last assistant message preview (first 60 chars)
+      - Optional filter by session_type
+    """
+    query = db.query(ChatSession).filter(ChatSession.user_id == current_user.id)
+    
+    # Filter by session type if provided
+    if session_type in ["text", "voice"]:
+        query = query.filter(ChatSession.session_type == session_type)
+    
+    sessions = query.order_by(ChatSession.updated_at.desc()).all()
+
+    result: List[ChatSessionResponse] = []
+
+    for s in sessions:
+        # count messages
+        count = db.query(ChatMessage).filter(
+            ChatMessage.session_id == s.session_id
+        ).count()
+
+        # preview of last assistant message
+        last_assistant_msg = db.query(ChatMessage).filter(
+            ChatMessage.session_id == s.session_id,
+            ChatMessage.role == "assistant"
+        ).order_by(ChatMessage.created_at.desc()).first()
+
+        preview = ""
+        if last_assistant_msg and last_assistant_msg.content:
+            if len(last_assistant_msg.content) > 60:
+                preview = last_assistant_msg.content[:60].rstrip() + "..."
+            else:
+                preview = last_assistant_msg.content
+
+        session_info = ChatSessionResponse(
+            id=s.id,
+            session_id=s.session_id,
+            title=s.title,
+            session_type=s.session_type,  # NEW
+            is_active=s.is_active,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+            ended_at=s.ended_at,  # NEW
+            call_duration=s.call_duration,  # NEW
+            message_count=count,
+            last_message_preview=preview
+        )
+        result.append(session_info)
+
+    return result
+
+
+# ============================================
+# 3️⃣ Get Chat History for a Session - UPDATED
+# ============================================
+@emp_router.get("/chat/sessions/{session_id}", response_model=ChatHistoryResponse)
+async def get_chat_history(
+    session_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    session = db.query(ChatSession).filter(
+        ChatSession.session_id == session_id,
+        ChatSession.user_id == current_user.id
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.session_id == session_id
+    ).order_by(ChatMessage.created_at.asc()).all()
+
+    session_info = ChatSessionResponse(
+        id=session.id,
+        session_id=session.session_id,
+        title=session.title,
+        session_type=session.session_type,  # NEW
+        is_active=session.is_active,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+        ended_at=session.ended_at,  # NEW
+        call_duration=session.call_duration,  # NEW
+        message_count=len(messages),
+        last_message_preview=(messages[-1].content[:60] + "...") if messages and messages[-1].role == "assistant" else ""
+    )
+
+    return ChatHistoryResponse(
+        session=session_info,
+        messages=[ChatMessageResponse.model_validate(m) for m in messages]
+    )

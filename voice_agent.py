@@ -1,279 +1,300 @@
-"""
-LiveKit Voice Agent with HR Assistant Integration
-Provides voice-enabled HR knowledge base retrieval and assistance
-"""
-
-import os
+from livekit.agents import JobContext, cli, WorkerOptions, AgentSession, Agent, function_tool, RunContext
+from livekit.plugins import google
+from livekit import rtc
+import asyncio
 import json
 import logging
-from typing import List, Dict, Any, Optional
 from datetime import datetime
-
-# LiveKit imports
-from livekit.agents import (
-    JobContext,
-    WorkerOptions,
-    cli,
-    Agent,
-    AgentSession,
-    RunContext,
-    function_tool,
-)
-from livekit.plugins import deepgram, google, silero
-
-# FastAPI imports
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-# Project imports
+from sqlalchemy.orm import Session as DBSession
+from src.core.database import SessionLocal
+from src.services.session_services import SessionService
 from src.llm.lite_client import lite_client
-from src.retriever.hr_retriever import HRRetriever
-from src.agents.query_router_agent import query_router_agent
+from src.vector_db.milvus_client import milvus_client
 
-# Logging configuration
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
-# Constants
-TRANSCRIPTS_DIR = "/tmp/transcripts"
+# Store active sessions
+active_sessions = {}
 
-# Verify environment variables
-REQUIRED_ENV_VARS = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVEKIT_URL', 'GOOGLE_API_KEY']
-missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
-if missing_vars:
-    logger.error(f"Missing required environment variables: {missing_vars}")
-    raise ValueError(f"Missing environment variables: {missing_vars}")
-
-# Ensure transcripts directory exists
-os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
-
-# FastAPI app initialization
-app = FastAPI(title="LiveKit Voice Agent API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# =====================================================
-# Utility Functions
-# =====================================================
-
-def build_context_prompt(category: str, user_query: str, chunks: List[Dict[str, Any]]) -> str:
-    """Build a prompt from retrieved knowledge base chunks"""
-    cat_title = (category or "uncategorized").replace("_", " ").title()
-    
-    system_instr = (
-        f"You are an intelligent HR assistant specialized in {cat_title}. "
-        "Answer strictly based on provided documents. Cite sources. "
-        "Be concise and professional."
-    )
-    
-    if not chunks:
-        return (
-            f"{system_instr}\n\n"
-            f"No relevant documents found in the {cat_title} knowledge base.\n"
-            "If you cannot answer from documents, state that you'll escalate to HR.\n\n"
-            f"Employee Question: {user_query}\n\nAnswer:"
-        )
-    
-    context_parts = []
-    for i, chunk in enumerate(chunks, 1):
-        fname = chunk.get("filename") or chunk.get("file_name") or "unknown"
-        text = chunk.get("content") or chunk.get("text") or chunk.get("chunk_text") or ""
-        cat = chunk.get("category") or chunk.get("collection") or category
-        
-        # Truncate long text
-        display_text = text if len(text) <= 2000 else f"{text[:2000]}..."
-        part = f"[Source {i}] {fname} (category: {cat})\n{display_text}"
-        context_parts.append(part)
-    
-    context = "\n\n".join(context_parts)
-    prompt = (
-        f"{system_instr}\n\n"
-        f"Context from documents:\n{context}\n\n"
-        f"Employee Question: {user_query}\n\n"
-        f"Answer (cite sources where used):"
-    )
-    
-    return prompt
-
-
-# =====================================================
-# LiveKit Function Tools
-# =====================================================
 
 @function_tool
-async def search_knowledge_bases(context: RunContext, query: str) -> str:
-    """
-    Search HR knowledge bases and return grounded answers.
+async def search_knowledge_bases(
+    context: RunContext,
+    query: str
+):
+    """Search all knowledge bases and return relevant context"""
+    user_query = query 
     
-    Steps:
-    1. Classify query into a category
-    2. Create embeddings
-    3. Retrieve relevant chunks from Milvus
-    4. Generate LLM answer grounded in retrieved content
-    """
+    category_descriptions = {
+        "payroll": """Payroll queries: Questions about salary, wages, tax deductions, 
+        bonuses, compensation, pay slips, salary increments, pay schedules, or financial payments.""",
+        
+        "hr_policy": """HR Policy queries: Questions about leave policies, attendance rules, 
+        company policies, employee handbook, code of conduct, performance reviews, benefits, 
+        holidays, work hours, or HR procedures.""",
+        
+        "it_support": """IT Support queries: Questions about technical issues, software, 
+        hardware, network access, passwords, IT systems, cybersecurity, computers, 
+        laptops, or technical assistance.""",
+        
+        "facilities": """Facilities queries: Questions about office space, building maintenance, 
+        parking, security, workspace allocation, meeting rooms, office supplies, 
+        or infrastructure.""",
+        
+        "uncategorized": """General or unclear queries that don't fit other categories."""
+    }
+    
+    categories_list = "\n".join([
+        f"- {cat}: {desc}" 
+        for cat, desc in category_descriptions.items()
+    ])
+    
+    classification_prompt = f"""You are a query classification expert for an HR chatbot system.
+
+Available Categories:
+{categories_list}
+
+Current Employee Query: {user_query}
+
+Instructions:
+1. Analyze the query carefully
+2. Classify into ONE category: payroll, hr_policy, it_support, facilities, or uncategorized
+3. Respond ONLY in this format:
+
+Category: <category_name>
+Confidence: <score>
+
+Your response:"""
+    
     try:
-        user_query = (query or "").strip()
-        if not user_query:
-            return "I didn't catch that. Could you repeat your question?"
+        # Classify query
+        messages = [
+            {"role": "system", "content": "You are a helpful HR assistant."},
+            {"role": "user", "content": classification_prompt}
+        ]
+        response_text = lite_client.chat_completion(messages)
+        logger.info(f"Classification result: {response_text}")
         
-        logger.info(f"[search_knowledge_bases] Processing query: {user_query}")
+        # Extract category
+        knowledge_base_category = "uncategorized"
+        for line in response_text.split('\n'):
+            if line.startswith('Category:'):
+                knowledge_base_category = line.split(':', 1)[1].strip().lower()
+                break
         
-        try:
-            classify_result = await query_router_agent.process_query(
-                user_query=user_query,
-                chat_history=[],
-                user_info={}
-            )
-            category = classify_result.get("category") or "uncategorized"
-            confidence = classify_result.get("confidence") or 0.0
-            logger.info(f"Query classified as '{category}' (confidence: {confidence})")
-        except Exception as e:
-            logger.exception("Classification failed, using 'uncategorized'")
-            category = "uncategorized"
+        # Generate embedding and search
+        query_embedding = lite_client.embedding(user_query)
+        retrieved_chunks = milvus_client.search(
+            query_embedding=query_embedding,
+            category=knowledge_base_category,
+            top_k=5
+        )
         
-        # Step 2: Create embedding (handled internally by retriever)
+        category_name = knowledge_base_category.replace('_', ' ').title()
         
-        # Step 3: Retrieve from Milvus
-        retriever = HRRetriever()
-        try:
-            results = await retriever.retrieve(
-                query=user_query,
-                category=category,
-                top_k=5
-            )
-            logger.info(f"Retrieved {len(results)} chunks from knowledge base")
-        except Exception as e:
-            logger.exception("Retrieval failed")
-            results = []
-        
-        # Step 4: Build prompt and generate answer
-        prompt = build_context_prompt(category, user_query, results)
-        
-        try:
-            messages = [
-                {"role": "system", "content": "You are a helpful HR assistant."},
-                {"role": "user", "content": prompt}
-            ]
-            answer = lite_client.chat_completion(messages)
-            logger.info("Generated LLM answer successfully")
-        except Exception as e:
-            logger.exception("Chat completion failed")
-            answer = (
-                "I'm sorry — I couldn't generate an answer right now. "
-                "Please try again later or contact HR directly."
+        if not retrieved_chunks:
+            return (
+                f"I couldn't find specific information about your query in our {category_name} documents. "
+                f"Please contact the HR department directly for assistance."
             )
         
-        return answer
+        # Build context
+        context = ""
+        for i, chunk in enumerate(retrieved_chunks, 1):
+            context += f"\n\n[Source {i}: {chunk['filename']} - Category: {chunk['category']}]\n{chunk['text']}\n"
+        
+        # Generate response
+        full_prompt = f"""You are an HR assistant specializing in {knowledge_base_category}.
+
+Context from {category_name} Documents:
+{context}
+
+Employee Question: {user_query}
+
+Provide a concise answer (2-3 sentences) based on the documents above. Answer in English only."""
+        
+        messages = [
+            {"role": "system", "content": "You are a helpful HR assistant."},
+            {"role": "user", "content": full_prompt}
+        ]
+        response_text = lite_client.chat_completion(messages)
+        logger.info("Generated answer successfully")
+        
+        return response_text
         
     except Exception as e:
-        logger.exception("Unexpected error in search_knowledge_bases")
-        return "Internal error in voice assistant. Please try again."
-
-
-async def start_hr_session(ctx: JobContext):
-    """Entry point for HR assistant sessions"""
-
-    # Create agent with HR search tools
-    agent = Agent(
-        instructions=(
-            "You are a voice-enabled HR assistant. Use the provided tools to answer "
-            "employee questions accurately. Always cite your sources when answering "
-            "from the knowledge base."
-        ),
-        tools=[search_knowledge_bases],
-    )
-    
-    # Initialize session
-    session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="en-US"),
-        llm=google.LLM(model="gemini-2.0-flash"),
-        tts=deepgram.TTS(),
-        vad=silero.VAD.load(),
-    )
-    
-    # Start session
-    await session.start(agent=agent, room=ctx.room)
-    
-    # Generate initial greeting
-    await session.generate_reply(
-        instructions=f"Hello  How can I help you with HR today?"
-    )
-    
-    logger.info("HR assistant session started successfully")
+        logger.exception("Search knowledge base failed")
+        return "I encountered an error searching for information. Please try again or contact HR directly."
 
 
 async def entrypoint(ctx: JobContext):
-    """
-    Main entry point for HR assistant voice sessions
+    """Main agent entrypoint with session management"""
     
-    Expected metadata fields:
-    - employee_id: Identifier for the employee
-    - knowledge_base_category: (Optional) Specific category to focus on
-    """
-    try:
-        # Connect to room
-        await ctx.connect()
-        
-        # Wait for participant
-        participant = await ctx.wait_for_participant()
-        
-        # Parse metadata
-        # Add transcript saving callback
+    # Parse metadata
+    metadata = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+    user_id = metadata.get("user_id", 0)
+    username = metadata.get("username", "unknown")
+    room_name = ctx.room.name
     
-        
-        # Start the HR session
-        await start_hr_session(ctx)
-        
-    except Exception as e:
-        logger.exception("Error in main entrypoint")
-        raise
-
-
-# =====================================================
-# FastAPI Routes (Optional)
-# =====================================================
-
-class SessionRequest(BaseModel):
-    employee_id: str
-    knowledge_base_category: Optional[str] = "uncategorized"
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "livekit-voice-agent"}
-
-
-@app.post("/api/sessions/create")
-async def create_session(request: SessionRequest):
-    """API endpoint to create a new HR voice session"""
+    logger.info(f"🚀 Agent starting for user {username} in room {room_name}")
+    
+    # Create database session
+    db = SessionLocal()
+    
     try:
-        # This would typically create a LiveKit room token
-        # Implementation depends on your LiveKit setup
-        return {
-            "status": "success",
-            "employee_id": request.employee_id,
-            "category": request.knowledge_base_category,
-            "message": "Session creation endpoint - implement LiveKit token generation"
+        # Create new chat session in database
+        chat_session = SessionService.create_session(
+            db=db,
+            user_id=user_id,
+            username=username,
+            session_type="voice",
+            livekit_room_name=room_name
+        )
+        
+        session_id = chat_session.session_id
+        logger.info(f"✅ Created chat session: {session_id}")
+        
+        # Store session info for tracking
+        active_sessions[room_name] = {
+            "session_id": session_id,
+            "start_time": datetime.now(),
+            "db": db,
         }
+        
+        # Create agent
+        agent = Agent(
+            instructions=(
+                f"You are a professional HR voice assistant. "
+                f"Session ID: {session_id}. "
+                "CRITICAL RULES:\n"
+                "1. ALWAYS respond in English language ONLY\n"
+                "2. Always search queries using the search_knowledge_bases tool\n"
+                "3. Keep responses concise and professional (2-3 sentences)"
+            ),
+            tools=[search_knowledge_bases],
+        )
+        
+        # Create session
+        session = AgentSession(
+            llm=google.beta.realtime.RealtimeModel(
+                model="gemini-2.0-flash-exp",
+                voice="Puck",
+                temperature=0.5,
+                instructions="You are a helpful HR assistant. Always respond in English only.",
+                language="en-US",
+            ),
+            preemptive_generation=True,
+            user_away_timeout=30.0,
+        )
+        
+        # FIXED: Use synchronous callbacks with asyncio.create_task for async operations
+        def on_agent_speech_sync(msg):
+            """Synchronous wrapper for agent speech"""
+            logger.info(f"🤖 Agent: {msg.content[:100]}...")
+            
+            if room_name in active_sessions:
+                session_data = active_sessions[room_name]
+                
+                # Create task for async database operation
+                async def save_message():
+                    try:
+                        SessionService.add_message(
+                            db=session_data["db"],
+                            session_id=session_data["session_id"],
+                            role="assistant",
+                            content=msg.content,
+                            message_type="voice_transcription"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to save agent message: {e}")
+                
+                asyncio.create_task(save_message())
+        
+        def on_user_speech_sync(msg):
+            """Synchronous wrapper for user speech"""
+            logger.info(f"👤 User: {msg.content[:100]}...")
+            
+            if room_name in active_sessions:
+                session_data = active_sessions[room_name]
+                
+                # Create task for async database operation
+                async def save_message():
+                    try:
+                        SessionService.add_message(
+                            db=session_data["db"],
+                            session_id=session_data["session_id"],
+                            role="user",
+                            content=msg.content,
+                            message_type="voice_transcription"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to save user message: {e}")
+                
+                asyncio.create_task(save_message())
+        
+        # Register SYNCHRONOUS event handlers
+        session.on("agent_speech_committed", on_agent_speech_sync)
+        session.on("user_speech_committed", on_user_speech_sync)
+        
+        # Start session
+        await session.start(agent=agent, room=ctx.room)
+        
+        # Set agent metadata
+        try:
+            await ctx.room.local_participant.set_metadata(
+                json.dumps({
+                    "role": "assistant",
+                    "type": "agent",
+                    "session_id": session_id,
+                })
+            )
+        except Exception as e:
+            logger.warning(f"Failed to set metadata: {e}")
+        
+        logger.info("✅ HR assistant session started successfully")
+        
+        # Greet user
+        await session.generate_reply(
+            instructions="Greet the user warmly in English and ask what HR queries they have regarding hr policy, leaves. Keep it brief."
+        )
+        
     except Exception as e:
-        logger.exception("Failed to create session")
-        return {"status": "error", "detail": str(e)}
+        logger.error(f"❌ Error in agent entrypoint: {e}", exc_info=True)
+        raise
+    finally:
+        # Cleanup on disconnect
+        if room_name in active_sessions:
+            session_data = active_sessions[room_name]
+            
+            # Calculate call duration
+            duration = int((datetime.now() - session_data["start_time"]).total_seconds())
+            
+            # End session in database
+            try:
+                SessionService.end_session(
+                    db=session_data["db"],
+                    session_id=session_data["session_id"],
+                    call_duration=duration
+                )
+                logger.info(f"✅ Session {session_data['session_id']} ended. Duration: {duration}s")
+            except Exception as e:
+                logger.error(f"Failed to end session: {e}")
+            
+            # Close database connection
+            try:
+                session_data["db"].close()
+            except Exception as e:
+                logger.error(f"Failed to close database: {e}")
+            
+            # Remove from active sessions
+            del active_sessions[room_name]
 
-
-# =====================================================
-# CLI Runner
-# =====================================================
 
 if __name__ == "__main__":
-    logger.info("Starting LiveKit Voice Agent worker...")
-    opts = WorkerOptions(entrypoint_fnc=entrypoint)
-    cli.run_app(opts)
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            load_threshold=0.9,
+        )
+    )

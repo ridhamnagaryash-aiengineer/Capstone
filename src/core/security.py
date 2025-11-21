@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from itsdangerous import URLSafeTimedSerializer
 
 from .database import get_db
-from ..models.user import User, UserRole
+from ..models.user import User
 
 # OAuth2 scheme
 auth_scheme = HTTPBearer()
@@ -134,24 +134,42 @@ def get_current_active_user(current_user: User = Depends(get_current_user)) -> U
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
-def require_role(allowed_roles: list[UserRole]):
+# def require_role(allowed_roles: list[UserRole]):
+#     """
+#     Dependency factory to check if user has required role
+#     Usage: Depends(require_role([UserRole.ADMIN]))
+#     """
+#     def role_checker(current_user: User = Depends(get_current_active_user)):
+#         if current_user.role not in allowed_roles:
+#             raise HTTPException(
+#                 status_code=status.HTTP_403_FORBIDDEN,
+#                 detail=f"Access denied. Required roles: {[role.value for role in allowed_roles]}"
+#             )
+#         return current_user
+#     return role_checker
+
+def require_role(allowed_roles: list[str]):
     """
     Dependency factory to check if user has required role
-    Usage: Depends(require_role([UserRole.ADMIN]))
+    Usage: Depends(require_role(["admin", "manager"]))
+    
+    Args:
+        allowed_roles: List of role strings (e.g., ["admin", "employee", "manager"])
     """
     def role_checker(current_user: User = Depends(get_current_active_user)):
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {[role.value for role in allowed_roles]}"
+                detail=f"Access denied. Required roles: {allowed_roles}"
             )
         return current_user
     return role_checker
 
+
 # Convenience dependencies
 def get_current_admin(current_user: User = Depends(get_current_active_user)) -> User:
     """Require admin role"""
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role != 'admin':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
@@ -160,7 +178,7 @@ def get_current_admin(current_user: User = Depends(get_current_active_user)) -> 
 
 def get_current_employee(current_user: User = Depends(get_current_active_user)) -> User:
     """Require employee role"""
-    if current_user.role != UserRole.EMPLOYEE:
+    if current_user.role != 'employee':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employee access required"

@@ -71,7 +71,7 @@ async def login(login: UserLogin, db: Session = Depends(get_db)):
     token_payload = {
         "sub": user.email,               # REQUIRED for get_current_user()
         "email": user.email,
-        "role": user.role.value,         # store role string: "admin" / "employee"
+        "role": user.role,         # store role string: "admin" / "employee"
         "grade": user.grade,
         "username": user.username,
         "full_name": user.full_name
@@ -83,7 +83,7 @@ async def login(login: UserLogin, db: Session = Depends(get_db)):
         "access_token": access_token,
         "token_type": "bearer",
         "expires_in": 3600,
-        "role": user.role.value,
+        "role": user.role,
         "grade": user.grade,
         "username": user.username,
         "full_name": user.full_name

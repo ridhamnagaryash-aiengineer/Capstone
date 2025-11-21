@@ -159,6 +159,71 @@ class MilvusClient:
 
         logger.info(f"Inserted {len(embeddings)} vectors → {col.name}")
         return len(embeddings)
+    
+    def search(
+        self,
+        query_embedding: List[float],
+        category: str,
+        top_k: int = 5
+    ) -> List[Dict]:
+        """
+        Search for similar vectors in category-specific collection
+        
+        Args:
+            query_embedding: Query vector
+            category: Category to search in
+            top_k: Number of results to return
+            
+        Returns:
+            List of search results with metadata
+        """
+        try:
+            # Get collection name
+            collection_name = COLLECTIONS.get(category, COLLECTIONS['uncategorized'])
+            collection = Collection(collection_name)
+            
+            # # Load collection if not loaded
+            # if not collection.is_loaded:
+            #     collection.load()
+            
+            # Search parameters
+            search_params = {
+                "metric_type": "COSINE",
+                "params": {"nprobe": 10}
+            }
+            
+            # Perform search
+            results = collection.search(
+                data=[query_embedding],
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k,
+                output_fields=["file_id", "filename", "chunk_index", "text", "category"]
+            )
+            
+            # Format results
+            retrieved_chunks = []
+            
+            for hits in results:
+                for hit in hits:
+                    chunk_data = {
+                        'id': hit.id,
+                        'score': hit.distance,  # Cosine similarity score
+                        'file_id': hit.entity.get('file_id'),
+                        'filename': hit.entity.get('filename'),
+                        'chunk_index': hit.entity.get('chunk_index'),
+                        'text': hit.entity.get('text'),
+                        'category': hit.entity.get('category')
+                    }
+                    retrieved_chunks.append(chunk_data)
+            
+            logger.info(f"🔍 Found {len(retrieved_chunks)} results in '{collection_name}'")
+            
+            return retrieved_chunks
+            
+        except Exception as e:
+            logger.error(f"❌ Milvus search failed: {e}")
+            return []
 
     async def search_similar(self, query: str, category: Optional[str], limit: int = 5):
         key, col = self._resolve(category)

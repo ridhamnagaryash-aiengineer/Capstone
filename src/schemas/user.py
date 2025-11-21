@@ -2,7 +2,6 @@
 from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional
 from datetime import datetime
-from src.models.user import UserRole  # Import the enum
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -18,7 +17,7 @@ class UserResponse(BaseModel):
     username: str
     full_name: Optional[str]
     is_active: bool
-    role: UserRole  # ✅ Include role in response
+    role: str  # ✅ Include role in response
     created_at: datetime
     
     class Config:

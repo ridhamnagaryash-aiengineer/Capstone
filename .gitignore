@@ -209,3 +209,5 @@ __marimo__/
 # DB
 hr_system.db
 uploads/
+hr_system_old.db
+hr_system1.db

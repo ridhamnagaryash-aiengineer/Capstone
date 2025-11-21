@@ -3,31 +3,26 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum as SQLEn
 from sqlalchemy.sql import func
 import enum
 from src.core.database import Base
+from sqlalchemy.orm import relationship
 
-class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    EMPLOYEE = "employee"
 
 class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, unique=True, index=True, nullable=False)
-    full_name = Column(String, nullable=True)
-    hashed_password = Column(String, nullable=False)
+    username = Column(String(100), unique=True, index=True, nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    full_name = Column(String(255))
+    grade = Column(String(50))
+    role = Column(String(50), default="employee")
+    hashed_password = Column(String(255))
     is_active = Column(Boolean, default=True)
-    role = Column(SQLEnum(UserRole), default=UserRole.EMPLOYEE, nullable=False)  # ✅ New field
-    grade= Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-class PasswordResetToken(Base):
-    __tablename__ = "password_reset_tokens"
     
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), index=True, nullable=False)
-    token = Column(String(255), unique=True, index=True, nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Don't define chat_sessions relationship here
+    
+    def __repr__(self):
+        return f"<User(id={self.id}, username={self.username})>"
+    
+    def __repr__(self):
+        return f"<User(id={self.id}, username={self.username})>"

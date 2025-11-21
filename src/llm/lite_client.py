@@ -88,6 +88,17 @@ class LiteLLMClient:
         except Exception as e:
             logger.error(f"❌ LiteLLM embedding_failed: {e}")
             raise RuntimeError(f"Embedding failed: {e}")
+        
+    def embedding(self, user_query):
+        # Call embeddings using LiteLLM
+        response = embedding(
+            model="gemini/text-embedding-004",  # or "gemini/embedding-001"
+            input=[user_query],  # LiteLLM expects a list
+        )
+
+        # Access the embedding vector
+        embedding_vector = response['data'][0]['embedding']
+        return embedding_vector
  
     # ----------------------------------------------------------------------
     #                      DIMENSION HELPER
