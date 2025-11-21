@@ -2,33 +2,39 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 import os
+from dotenv import load_dotenv
+load_dotenv()
+database_url=load_dotenv().get("DATABASE_URL")
 
-# Get database URL from environment or use SQLite default
-database_url = os.getenv('DATABASE_URL', 'sqlite:///./hr_system.db')
-
-# SQLite-specific configuration
+# Remove SQLite-specific options for Postgres
 connect_args = {}
-if database_url.startswith('sqlite'):
-    connect_args = {"check_same_thread": False}
+engine_args = {}
 
-# Create SQLAlchemy engine
+# If SQLite → allow single-thread
+if database_url.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+    engine_args["connect_args"] = connect_args
+else:
+    # Postgres (Supabase) → standard pooling
+    # DON'T use StaticPool here
+    engine_args["pool_pre_ping"] = True
+
+# Create engine
 engine = create_engine(
     database_url,
-    connect_args=connect_args,
-    poolclass=StaticPool if database_url.startswith('sqlite') else None,
-    echo=os.getenv('DEBUG', 'False').lower() == 'true'
+    echo=os.getenv("DEBUG", "False").lower() == "true",
+    **engine_args
 )
 
-# Create SessionLocal class
+# Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Create Base class
+# ORM base
 Base = declarative_base()
 
+
 def get_db():
-    """Dependency to get DB session"""
     db = SessionLocal()
     try:
         yield db
