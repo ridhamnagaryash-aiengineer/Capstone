@@ -1,16 +1,15 @@
-# src/services/document_service.py
-
 import uuid
 import logging
 import os
-from typing import Tuple, List, Optional
+from typing import Tuple, Optional
 from pathlib import Path
 
 from fastapi import UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
-import fitz  # PyMuPDF
+import fitz
 import docx
+import boto3
 
 from ..llm.lite_client import lite_client
 from ..vector_db.milvus_client import milvus_client
@@ -19,6 +18,18 @@ from ..models.document import HRDocument, DocumentCategory
 
 logger = logging.getLogger(__name__)
 
+# ----------------------------- S3 CONFIG -----------------------------
+S3_BUCKET = os.getenv("S3_BUCKET_NAME")
+AWS_REGION = os.getenv("AWS_REGION")
+
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name=AWS_REGION,
+)
+
+# Still needed for temp PDF extraction only
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -44,20 +55,20 @@ class DocumentService:
         await self._validate_file(file)
         file_id = str(uuid.uuid4())
 
-        # Save file locally
-        local_path, file_size = await self._save_locally(file, file_id)
+        # Upload file to S3 (returns s3_key only)
+        s3_key, file_size = await self._upload_to_s3(file, file_id)
 
-        # Create DB record
+        # Create DB record (stores presigned URL + s3_key)
         document = await self._create_document_record(
             db=db,
             file=file,
             user=user,
             file_id=file_id,
-            local_path=local_path,
+            s3_key=s3_key,
             file_size=file_size
         )
 
-        # Process in background
+        # Background processing
         if background_tasks:
             background_tasks.add_task(
                 self._process_document_background,
@@ -73,7 +84,6 @@ class DocumentService:
 
     # ----------------------------------------------------------------------
     async def _validate_file(self, file: UploadFile):
-        """Validate uploaded file type."""
         allowed = [
             "application/pdf",
             "application/msword",
@@ -120,8 +130,8 @@ class DocumentService:
             raise HTTPException(400, f"Content extraction failed: {e}")
 
     # ----------------------------------------------------------------------
-    async def _save_locally(self, file: UploadFile, file_id: str) -> Tuple[str, int]:
-        """Save file to uploads/."""
+    async def _upload_to_s3(self, file: UploadFile, file_id: str) -> Tuple[str, int]:
+        """Upload file to AWS S3. Returns S3 key + size."""
         try:
             file_bytes = await file.read()
             size = len(file_bytes)
@@ -130,35 +140,54 @@ class DocumentService:
                 raise HTTPException(400, "File exceeds 50MB limit")
 
             ext = (file.filename or "").split(".")[-1]
-            fname = f"{file_id}.{ext}"
-            path = UPLOAD_DIR / fname
-            path.write_bytes(file_bytes)
+            s3_key = f"documents/{file_id}.{ext}"
+
+            s3.put_object(
+                Bucket=S3_BUCKET,
+                Key=s3_key,
+                Body=file_bytes,
+                ContentType=file.content_type
+            )
 
             await file.seek(0)
-            return str(path), size
+            return s3_key, size
 
         except Exception as e:
-            logger.exception("❌ Local save failed")
-            raise HTTPException(500, f"Local save failed: {e}")
+            logger.exception("❌ S3 upload failed")
+            raise HTTPException(500, f"S3 upload failed: {e}")
+
+    # ----------------------------------------------------------------------
+    def generate_presigned_url(self, key: str, expires_in: int = 3600):
+        """Generate a temporary access URL for S3 objects."""
+        try:
+            return s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": S3_BUCKET, "Key": key},
+                ExpiresIn=expires_in
+            )
+        except Exception as e:
+            logger.exception("❌ Failed to generate presigned URL")
+            return None
 
     # ----------------------------------------------------------------------
     async def _create_document_record(
-        self, db: Session, file: UploadFile, user, file_id, local_path, file_size
+        self, db: Session, file: UploadFile, user, file_id, s3_key, file_size
     ) -> HRDocument:
 
         try:
             doc = HRDocument(
                 file_id=file_id,
-                filename=os.path.basename(local_path),
+                filename=file.filename,
                 original_filename=file.filename,
-                s3_url=local_path,
-                s3_key=None,
+                s3_key=s3_key,
+                s3_url=self.generate_presigned_url(s3_key),  # fresh presigned URL
                 file_size=file_size,
                 content_type=file.content_type,
                 uploaded_by_id=user.id,
                 processing_status="pending",
                 category=DocumentCategory.UNCATEGORIZED
             )
+
             db.add(doc)
             db.commit()
             db.refresh(doc)
@@ -173,7 +202,7 @@ class DocumentService:
     async def _process_document_background(
         self, file_id: str, file: UploadFile, document_id: int, db: Session
     ):
-        """Extract, classify, embed, and insert into correct Milvus collection."""
+        """Extract, classify, embed, and insert into Milvus."""
         try:
             doc = db.query(HRDocument).filter(HRDocument.id == document_id).first()
             if not doc:
@@ -182,12 +211,10 @@ class DocumentService:
             doc.processing_status = "processing"
             db.commit()
 
-            # Extract content
             content = await self.extract_content(file)
             if not content:
                 raise Exception("No extractable text")
 
-            # Classification + chunking + embeddings
             result = self.classifier_agent.process_document(
                 file_id=file_id,
                 filename=file.filename,
@@ -206,8 +233,6 @@ class DocumentService:
             if not embeddings:
                 raise Exception("No embeddings generated")
 
-            # SINGLE CALL INSERT — ALL EMBEDDINGS AT ONCE
-            # pass per-chunk texts so Milvus stores correct chunk content (not full PDF repeated)
             total_vectors = await self.milvus.store_document_embeddings(
                 file_id=file_id,
                 filename=file.filename,
@@ -217,8 +242,6 @@ class DocumentService:
                 chunks=chunks
             )
 
-
-            # Update DB record
             doc.category = DocumentCategory(category)
             doc.classification_confidence = confidence
             doc.vector_count = total_vectors
@@ -231,7 +254,6 @@ class DocumentService:
 
         except Exception as e:
             logger.exception("❌ Background processing failed")
-
             try:
                 doc = db.query(HRDocument).filter(HRDocument.id == document_id).first()
                 if doc:
@@ -243,12 +265,18 @@ class DocumentService:
 
     # ----------------------------------------------------------------------
     async def get_user_documents(self, user_id: int, db: Session):
-        return (
+        docs = (
             db.query(HRDocument)
             .filter(HRDocument.uploaded_by_id == user_id)
             .order_by(HRDocument.uploaded_at.desc())
             .all()
         )
+
+        # Refresh presigned URLs each time
+        for d in docs:
+            d.s3_url = self.generate_presigned_url(d.s3_key)
+
+        return docs
 
     # ----------------------------------------------------------------------
     async def delete_document(self, file_id: str, user_id: int, db: Session):
@@ -261,12 +289,13 @@ class DocumentService:
             if not doc:
                 raise HTTPException(404, "Document not found")
 
-            # delete local file
-            p = Path(doc.s3_url)
-            if p.exists():
-                p.unlink()
+            # Delete from S3
+            try:
+                s3.delete_object(Bucket=S3_BUCKET, Key=doc.s3_key)
+            except Exception as e:
+                logger.error(f"⚠ Could not delete S3 file: {e}")
 
-            # delete from milvus
+            # Delete from Milvus
             deleted = await self.milvus.delete_by_file_id(file_id)
 
             db.delete(doc)

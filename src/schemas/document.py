@@ -1,5 +1,3 @@
-# app/schemas/document.py
-
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, List
@@ -14,7 +12,7 @@ class HRDocumentResponse(BaseModel):
     original_filename: str
     s3_url: str
     file_size: int
-    category: DocumentCategory       # enum
+    category: DocumentCategory
     classification_confidence: Optional[float]
     uploaded_by_id: int
     uploaded_at: datetime
@@ -23,7 +21,7 @@ class HRDocumentResponse(BaseModel):
 
     class Config:
         from_attributes = True
-        use_enum_values = True       # 🔥 required fix
+        use_enum_values = True
 
 
 class HRDocumentList(BaseModel):
