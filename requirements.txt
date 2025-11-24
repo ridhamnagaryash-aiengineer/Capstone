@@ -22,3 +22,5 @@ google-generativeai
 pymupdf
 livekit
 livekit-api
+livekit-agents
+livekit-plugins-google
