@@ -1,59 +1,52 @@
 # src/services/user_service.py
 from sqlalchemy.orm import Session
 from typing import Optional
-from ..models.user import User
-from ..core.security import get_password_hash, verify_password, create_access_token
-from ..schemas.user import UserCreate
+from src.models.user import User
+
 
 class UserService:
-    async def create_user(
-        self, 
-        email: str, 
-        username: str, 
-        password: str, 
+    """
+    Minimal user utilities.
+    No authentication.
+    Users only exist for:
+    - document ownership
+    - admin vs employee roles
+    """
+
+    async def get_user_by_email(self, email: str, db: Session) -> Optional[User]:
+        return db.query(User).filter(User.email == email).first()
+
+    async def create_user_admin_managed(
+        self,
+        email: str,
+        username: str,
         full_name: str,
+        grade: str,
+        role: str,     # "admin" or "employee"
         db: Session
-    ):
-        # Check if user already exists
-        existing_user = db.query(User).filter(
+    ) -> User:
+
+        existing = db.query(User).filter(
             (User.email == email) | (User.username == username)
         ).first()
-        
-        if existing_user:
+
+        if existing:
             raise ValueError("User with this email or username already exists")
-        
-        # Create new user
-        hashed_password = get_password_hash(password)
+
         user = User(
             email=email,
             username=username,
-            hashed_password=hashed_password,
-            full_name=full_name
+            full_name=full_name,
+            hashed_password="",  # no authentication needed
+            grade=grade,
+            role=role,
+            is_active=True,
         )
-        
+
         db.add(user)
         db.commit()
         db.refresh(user)
-        
         return user
-    
-    async def authenticate_user(self, email: str, password: str, db: Session):
-        user = db.query(User).filter(User.email == email).first()
-        
-        if not user or not verify_password(password, user.hashed_password):
-            raise ValueError("Invalid credentials")
-        
-        if not user.is_active:
-            raise ValueError("User account is disabled")
-        
-        # Create access token
-        access_token = create_access_token(data={"sub": user.email})
-        
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user": user
-        }
 
-# Create instance
+
 user_service = UserService()
