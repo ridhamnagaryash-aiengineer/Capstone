@@ -20,8 +20,6 @@ from src.models.document import HRDocument
 HRDocument.__table__.drop(engine, checkfirst=True)
 Base.metadata.create_all(bind=engine)
 
-
-
 app = FastAPI(
     title="HR Assistant API",
     description="AI-powered HR Document Management + Retrieval",

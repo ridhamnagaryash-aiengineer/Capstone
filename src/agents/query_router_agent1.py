@@ -24,7 +24,6 @@ class QueryState(TypedDict):
     error: str
     success: bool
     user_info: Dict[str, Any]
-    llm_params: Dict[str, Any]  # <‑‑ add this
 
 
 # ---------------- AGENT ----------------
@@ -93,7 +92,6 @@ class QueryRouterAgent:
         state["current_node"] = "generate_response"
         try:
             docs = state.get("retrieved_chunks") or []
-            llm_params = state.get("llm_params") or {}
 
             # Fallback: no RAG hits
             if not docs:
@@ -102,12 +100,16 @@ class QueryRouterAgent:
                     "No documents matched; provide best HR guidance.\n"
                 )
                 messages = [{"role": "user", "content": fallback}]
+                # out = self.llm.chat_completion([{"role": "user", "content": fallback}])
+
                 response = litellm.completion(
                     **llm_params,
                     messages=messages,
                 )
+                
                 response_text = response.choices[0].message.content
-                state["llm_response"] = response_text
+
+                state["llm_response"] = out
                 state["sources"] = []
                 state["success"] = True
                 return state
@@ -116,19 +118,17 @@ class QueryRouterAgent:
             context = "\n\n".join(
                 [f"[{d.get('filename')}] → {d.get('content')}" for d in docs]
             )
+
             template = self.templates.get("chat_response")
             prompt = template.format(
                 context=context,
                 question=state["user_query"],
-                user_context="",  # keep template compatibility but empty
+                user_context=""  # keep template compatibility but empty
             )
-            messages = [{"role": "user", "content": prompt}]
-            response = litellm.completion(
-                **llm_params,
-                messages=messages,
-            )
-            response_text = response.choices[0].message.content
-            state["llm_response"] = response_text
+
+            answer = self.llm.chat_completion([{"role": "user", "content": prompt}])
+
+            state["llm_response"] = answer
             state["sources"] = docs
             state["success"] = True
             return state
@@ -140,13 +140,7 @@ class QueryRouterAgent:
             return state
 
     # ---------------- PUBLIC ENTRY ----------------
-    async def process_query(
-        self,
-        user_query: str,
-        chat_history: List[Dict],
-        user_info=None,
-        llm_params: Dict[str, Any] = None,
-    ) -> Dict[str, Any]:
+    async def process_query(self, user_query: str, chat_history: List[Dict], user_info=None, llm_params=dict) -> Dict[str, Any]:
         initial: QueryState = {
             "user_query": user_query,
             "chat_history": chat_history or [],
@@ -157,10 +151,11 @@ class QueryRouterAgent:
             "current_node": "",
             "error": "",
             "success": False,
-            "user_info": {},   # not used
-            "llm_params": llm_params or {},  # <‑‑ store here
+            "user_info": {},  # not used
         }
+
         final = await self.workflow.ainvoke(initial)
+
         return {
             "response": final.get("llm_response"),
             "sources": final.get("sources", []),

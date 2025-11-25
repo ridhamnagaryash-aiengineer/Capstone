@@ -15,7 +15,7 @@ async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     background_tasks: BackgroundTasks = None,
-    current_user = Depends(get_current_admin)   # always admin id=1
+    current_user = Depends(get_current_admin)   
 ):
     return await document_service.process_document_upload(
         file=file,
