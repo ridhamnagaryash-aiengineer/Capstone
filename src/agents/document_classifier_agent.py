@@ -11,45 +11,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def normalize_category(raw: str) -> str:
-    t = (raw or "").lower()
-    t = t.replace("-", " ").replace("_", " ").strip()
-
-    # HR POLICY
-    if any(k in t for k in [
-        "policy", "hr", "leave", "attendance", "holiday",
-        "probation", "onboarding", "exit", "transfer"
-    ]):
-        return "hr_policy"
-
-    # PAYROLL
-    if any(k in t for k in [
-        "payroll", "salary", "compensation", "ctc", "slip",
-        "bonus", "payout", "reimbursement"
-    ]):
-        return "payroll"
-
-    # FACILITIES
-    if any(x in t for x in [
-        "facility", "facilities", "facility management", 
-        "office facility", "office facilities",
-        "maintenance", "building", "premises", 
-        "canteen", "cafeteria", "workplace", "office admin"
-    ]):
-        return "facilities"
-
-    # IT SUPPORT
-    if any(k in t for k in [
-        "it", "tech", "technical", "support", "helpdesk",
-        "laptop", "vpn", "email", "hardware", "software", "reset"
-    ]):
-        return "it_support"
-    
-
-    return "uncategorized"
-
-
-
 # ------------------------------------------------------
 # STATE
 # ------------------------------------------------------
@@ -74,23 +35,30 @@ class DocumentState(TypedDict):
 # AGENT
 # ------------------------------------------------------
 class DocumentClassifierAgent:
+    """
+    Simplified document processor for single-collection workflows.
+    Flow: extract_content -> generate_embeddings -> finalize
+    NOTE: No per-document classification done at ingestion time.
+    Documents get stored in the unified Milvus collection with a
+    'category' field set to 'uncategorized' by default.
+    """
+
     def __init__(self):
         self.llm = lite_client
+        # prompt_loader kept for compatibility but not used for classification
         self.templates = prompt_loader
         self.workflow = self._build_workflow()
-        logger.info("DocumentClassifierAgent initialized")
+        logger.info("DocumentClassifierAgent initialized (classification removed)")
 
     def _build_workflow(self) -> StateGraph:
         g = StateGraph(DocumentState)
 
         g.add_node("extract_content", self.extract_content)
-        g.add_node("classify_document", self.classify_document)
         g.add_node("generate_embeddings", self.generate_embeddings)
         g.add_node("finalize", self.finalize)
 
         g.set_entry_point("extract_content")
-        g.add_edge("extract_content", "classify_document")
-        g.add_edge("classify_document", "generate_embeddings")
+        g.add_edge("extract_content", "generate_embeddings")
         g.add_edge("generate_embeddings", "finalize")
         g.add_edge("finalize", END)
 
@@ -101,6 +69,7 @@ class DocumentClassifierAgent:
         state["current_node"] = "extract_content"
         try:
             text = state.get("file_content") or ""
+            # keep a sensible upper bound to avoid huge payloads
             state["extracted_text"] = text[:200_000]
             return state
         except Exception as e:
@@ -109,71 +78,49 @@ class DocumentClassifierAgent:
             return state
 
     # ---------------- Node 2 ----------------
-    def classify_document(self, state: DocumentState) -> DocumentState:
-        state["current_node"] = "classify_document"
-
-        try:
-            text_sample = (state.get("extracted_text") or "")[:4000]
-            template = self.templates.get("document_classification")
-            prompt = template.format(content=text_sample)
-
-            response = self.llm.chat_completion([
-                {"role": "user", "content": prompt}
-            ])
-
-            # parse
-            raw_category = "uncategorized"
-            confidence = 0.0
-
-            for line in response.splitlines():
-                l = line.strip().lower()
-                if l.startswith("category:"):
-                    raw_category = line.split(":", 1)[1].strip().lower()
-                elif l.startswith("confidence:"):
-                    try:
-                        confidence = float(line.split(":", 1)[1].strip())
-                    except:
-                        confidence = 0.5
-
-            # Apply strict normalization
-            normalized = normalize_category(raw_category)
-
-            state["category"] = normalized
-            state["confidence"] = confidence
-            logger.error(f"[CLASSIFIER DEBUG] RAW='{raw_category}' → NORMALIZED='{normalized}' → CONF={confidence}")
-
-            return state
-
-        except Exception as e:
-            state["category"] = "uncategorized"
-            state["confidence"] = 0.0
-            state["error"] = f"classify_document_error: {e}"
-            state["success"] = False
-            return state
-
-    # ---------------- Node 3 ----------------
     def generate_embeddings(self, state: DocumentState) -> DocumentState:
         state["current_node"] = "generate_embeddings"
 
         try:
             text = state.get("extracted_text") or ""
             if not text:
+                # No text => no chunks/embeddings, but still return predictable structure
                 state["chunks"] = []
                 state["embeddings"] = []
+                # Keep keys expected downstream
+                state["category"] = "uncategorized"
+                state["confidence"] = 0.0
                 return state
 
             chunks = self._chunk_text(text)
-            embeddings = []
+            embeddings: List[List[float]] = []
+
+            # determine safe embedding dimension from client if available
+            try:
+                dim = int(self.llm.get_embedding_dim() or 0)
+            except Exception:
+                dim = 0
 
             for ch in chunks:
                 try:
                     emb = self.llm.create_embedding(ch)
+                    # ensure list type
                     embeddings.append(list(emb))
-                except:
-                    embeddings.append([0.0] * 768)
+                except Exception as embed_err:
+                    logger.exception("Embedding failed for chunk; inserting zero vector")
+                    if dim and dim > 0:
+                        embeddings.append([0.0] * dim)
+                    else:
+                        # fallback fixed length (safe default)
+                        embeddings.append([0.0] * 768)
 
             state["chunks"] = chunks
             state["embeddings"] = embeddings
+
+            # No runtime classification — keep default neutral values so callers don't break
+            state["category"] = "uncategorized"
+            state["confidence"] = 0.0
+
             return state
 
         except Exception as e:
@@ -181,7 +128,7 @@ class DocumentClassifierAgent:
             state["success"] = False
             return state
 
-    # ---------------- Node 4 ----------------
+    # ---------------- Node 3 ----------------
     def finalize(self, state: DocumentState) -> DocumentState:
         state["current_node"] = "finalize"
         state["success"] = True
@@ -189,9 +136,10 @@ class DocumentClassifierAgent:
 
     # Utility
     def _chunk_text(self, text: str, chunk_size=1000, overlap=200):
-        chunks = []
+        chunks: List[str] = []
         start = 0
-        while start < len(text):
+        length = len(text)
+        while start < length:
             end = start + chunk_size
             chunks.append(text[start:end])
             start += chunk_size - overlap
@@ -204,7 +152,7 @@ class DocumentClassifierAgent:
             "file_content": file_content,
             "file_type": file_type,
             "extracted_text": "",
-            "category": "",
+            "category": "uncategorized",
             "confidence": 0.0,
             "chunks": [],
             "embeddings": [],
@@ -217,5 +165,5 @@ class DocumentClassifierAgent:
         return final
 
 
-
+# Singleton instance
 document_classifier_agent = DocumentClassifierAgent()

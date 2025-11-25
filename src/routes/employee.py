@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Body
 # from sqlalchemy.orm import Session
 # from datetime import datetime
@@ -358,39 +359,35 @@ from src.services.chat_service import chat_service
 from src.models.chat import ChatSession, ChatMessage
 
 logger = logging.getLogger(__name__)
+=======
+# src/routes/employee.py
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List
+
+from src.core.security import get_current_active_user
+from src.schemas.chat import ChatMessageCreate, ChatResponse
+from src.services.chat_service import chat_service
+from src.models.user import User
+>>>>>>> eb3d30bae689bd44104166b37f52fa5212571fc2
 
 emp_router = APIRouter(prefix="/employee", tags=["Employee"])
 
 
-# -----------------------
-# Helpers
-# -----------------------
-def generate_session_title(message: str) -> str:
-    """Create a short, clean session title from the user's first message."""
-    if not message:
-        return "New Chat"
-    msg = message.strip()
-    if len(msg) <= 30:
-        return msg
-    return msg[:30].rstrip() + "..."
-
-
-# ============================================
-# 1️⃣ Chat With HR Assistant (Main Endpoint)
-# ============================================
 @emp_router.post("/chat", response_model=ChatResponse)
 async def chat_with_hr(
-    request: Request,
     chat_request: ChatMessageCreate,
+<<<<<<< HEAD
     db: Session = Depends(get_db)
+=======
+    current_user: User = Depends(get_current_active_user)
+>>>>>>> eb3d30bae689bd44104166b37f52fa5212571fc2
 ):
     """
-    Intelligent HR Chat Assistant (RAG + LLM)
-    - Maintains chat sessions
-    - Stores conversation history
-    - Performs query classification, embedding, vector search, answer generation
+    Stateless HR chat endpoint.
+    No sessions. No history. No DB.
     """
     try:
+<<<<<<< HEAD
 
         response_text, sources, meta = await chat_service.process_chat_query(
             user_query=chat_request.message,
@@ -402,14 +399,22 @@ async def chat_with_hr(
             sources=sources,
             category=meta.get("category"),
             confidence=meta.get("confidence")
+=======
+        response_text, sources = await chat_service.process_chat_query(
+            user_query=chat_request.message
         )
 
-    except HTTPException:
-        raise
+        return ChatResponse(
+            session_id="",
+            response=response_text,
+            sources=sources,
+            message_id=None
+>>>>>>> eb3d30bae689bd44104166b37f52fa5212571fc2
+        )
+
     except Exception as e:
-        logger.error(f"Chat failed: {e}")
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+<<<<<<< HEAD
 
 
 # ============================================
@@ -588,3 +593,5 @@ async def summarize_pdf(
         "filename": file.filename,
         "summary": "To be implemented"
     }
+=======
+>>>>>>> eb3d30bae689bd44104166b37f52fa5212571fc2
