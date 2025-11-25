@@ -15,7 +15,7 @@ class ChatService:
         self.router = query_router_agent
         logger.info("ChatService initialized (stateless)")
 
-    async def process_chat_query(self, user_query: str):
+    async def process_chat_query(self, user_query: str, llm_params: dict):
         """
         Returns only the assistant response + retrieved sources.
         Everything else is removed.
@@ -24,7 +24,8 @@ class ChatService:
             result = await self.router.process_query(
                 user_query=user_query,
                 chat_history=[],   # always empty
-                user_info=None     # no user context
+                user_info=None,     # no user context
+                llm_params=llm_params
             )
 
             if not result.get("success"):
