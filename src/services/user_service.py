@@ -1,7 +1,12 @@
 # src/services/user_service.py
 from sqlalchemy.orm import Session
 from typing import Optional
-from src.models.user import User
+from pydantic import BaseModel
+
+
+class Message(BaseModel):
+    message: str
+
 
 
 class UserService:
@@ -22,7 +27,7 @@ class UserService:
         username: str,
         full_name: str,
         grade: str,
-        role: str,     # "admin" or "employee"
+        role: str,    
         db: Session
     ) -> User:
 
@@ -37,7 +42,7 @@ class UserService:
             email=email,
             username=username,
             full_name=full_name,
-            hashed_password="",  # no authentication needed
+            hashed_password="",  
             grade=grade,
             role=role,
             is_active=True,

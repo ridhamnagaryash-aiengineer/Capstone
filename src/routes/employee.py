@@ -139,7 +139,7 @@ import logging
 
 emp_router = APIRouter(prefix="/employee", tags=["Employee"])
 
-
+# API for HR Chat
 @emp_router.post("/chat", response_model=ChatResponse)
 async def chat_with_hr(
     request: Request,
@@ -147,11 +147,7 @@ async def chat_with_hr(
     user_metadata: str = Form(None)
 ):
     """
-    Chat with HR assistant.
-    Args:
-        request: FastAPI request object
-        message: The chat message
-        user_metadata: JSON string containing user metadata including team_id
+    Stateless HR chat endpoint without sessions ,chat history and DB querying.
     """
     user_metadata = json.loads(user_metadata) if user_metadata else {}
     team_id = user_metadata.get("team_id")

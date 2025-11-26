@@ -9,7 +9,7 @@ logger.setLevel(logging.INFO)
 
 
 class ChatService:
-    """Stateless HR chat wrapper. No user data, no history, no sessions."""
+    """Stateless HR chat wrapper without user data, history and sessions."""
 
     def __init__(self):
         self.router = query_router_agent
@@ -17,15 +17,13 @@ class ChatService:
 
     async def process_chat_query(self, user_query: str, llm_params: dict):
         """
-        Returns only the assistant response + retrieved sources.
-        Everything else is removed.
+        Returns the assistant response + retrieved sources.
         """
         try:
             result = await self.router.process_query(
                 user_query=user_query,
-                chat_history=[],   # always empty
-                user_info=None,     # no user context
-                llm_params=llm_params
+                chat_history=[],   
+                user_info=None     
             )
 
             if not result.get("success"):
@@ -42,6 +40,5 @@ class ChatService:
                 "An internal error occurred while processing your request.",
                 []
             )
-
 
 chat_service = ChatService()

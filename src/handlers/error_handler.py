@@ -1,4 +1,3 @@
-
 class error_handler(Exception):
     def __init__(self, detail, status_code, headers=dict()):
         super().__init__(detail)

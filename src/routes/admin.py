@@ -1,12 +1,10 @@
-# src/routes/admin.py
+
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
-
-from src.core.security import get_current_admin   # static admin user (id=1)
+from src.core.security import get_current_admin  
 from src.core.database import get_db
 from src.services.document_service import document_service
 from src.schemas.document import HRDocumentResponse, HRDocumentList
-
 admin_router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
@@ -31,7 +29,7 @@ async def list_documents(
     current_user = Depends(get_current_admin)
 ):
     docs = await document_service.get_user_documents(
-        user_id=current_user.id,  # always returns id=1
+        user_id=current_user.id, 
         db=db
     )
     return {

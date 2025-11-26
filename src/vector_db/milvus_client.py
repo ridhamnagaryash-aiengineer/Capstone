@@ -8,7 +8,6 @@ from pymilvus import (
     connections, FieldSchema, CollectionSchema,
     DataType, Collection, utility
 )
-
 from ..llm.lite_client import lite_client
 
 logger = logging.getLogger(__name__)

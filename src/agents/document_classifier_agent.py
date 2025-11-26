@@ -2,11 +2,6 @@
 
 import logging
 from typing import TypedDict, List, Dict, Any
-
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough, RunnableMap
-
-
-
 from src.llm.lite_client import lite_client
 from src.prompts_engineering.prompts_loader import prompt_loader
 
@@ -35,23 +30,21 @@ class DocumentState(TypedDict):
 
 
 # ------------------------------------------------------
-# AGENT (LANGCHAIN VERSION)
+# AGENT (NO LANGCHAIN)
 # ------------------------------------------------------
 class DocumentClassifierAgent:
     """
-    Simplified document processor for single-collection workflows.
-    Removed LangGraph. Converted to LangChain Runnable pipeline.
+    Simple document processor — no LangChain, no LangGraph, no magic.
+    Straight sequential function calls.
     """
 
     def __init__(self):
         self.llm = lite_client
-        self.templates = prompt_loader  # compatibility
-        self.workflow = self._build_pipeline()
-        logger.info("DocumentClassifierAgent initialized (LangChain runnable pipeline)")
+        self.templates = prompt_loader
+        logger.info("DocumentClassifierAgent initialized (pure Python pipeline)")
 
-    # ---------------- Pipeline Steps ----------------
-
-    def _extract_content(self, state: DocumentState) -> DocumentState:
+    # ---------------- Step 1 ----------------
+    def extract_content(self, state: DocumentState) -> None:
         state["current_node"] = "extract_content"
         try:
             text = state.get("file_content") or ""
@@ -59,24 +52,26 @@ class DocumentClassifierAgent:
         except Exception as e:
             state["error"] = f"extract_content_error: {e}"
             state["success"] = False
-        return state
 
-    def _generate_embeddings(self, state: DocumentState) -> DocumentState:
+    # ---------------- Step 2 ----------------
+    def generate_embeddings(self, state: DocumentState) -> None:
         state["current_node"] = "generate_embeddings"
+
         try:
             text = state.get("extracted_text") or ""
 
+            # Empty case
             if not text:
                 state["chunks"] = []
                 state["embeddings"] = []
                 state["category"] = "uncategorized"
                 state["confidence"] = 0.0
-                return state
+                return
 
             chunks = self._chunk_text(text)
             embeddings: List[List[float]] = []
 
-            # try to get embedding dimension
+            # detect embedding dimension
             try:
                 dim = int(self.llm.get_embedding_dim() or 0)
             except Exception:
@@ -87,7 +82,7 @@ class DocumentClassifierAgent:
                     emb = self.llm.create_embedding(ch)
                     embeddings.append(list(emb))
                 except Exception:
-                    logger.exception("Embedding failed; inserting zero vector")
+                    logger.exception("Embedding failed; using zero vector")
                     if dim and dim > 0:
                         embeddings.append([0.0] * dim)
                     else:
@@ -102,31 +97,14 @@ class DocumentClassifierAgent:
             state["error"] = f"generate_embeddings_error: {e}"
             state["success"] = False
 
-        return state
-
-    def _finalize(self, state: DocumentState) -> DocumentState:
+    # ---------------- Step 3 ----------------
+    def finalize(self, state: DocumentState) -> None:
         state["current_node"] = "finalize"
         state["success"] = True
-        return state
 
-    # ---------------- Build LangChain Pipeline ----------------
-
-    def _build_pipeline(self):
-        """
-        Runnable pipeline:
-        state → extract_content → generate_embeddings → finalize
-        """
-        return (
-            RunnablePassthrough()
-            | RunnableLambda(self._extract_content)
-            | RunnableLambda(self._generate_embeddings)
-            | RunnableLambda(self._finalize)
-        )
-
-    # ---------------- Public Entry ----------------
-
+    # ---------------- Main entry ----------------
     def process_document(self, file_id, filename, file_content, file_type):
-        initial: DocumentState = {
+        state: DocumentState = {
             "file_id": file_id,
             "filename": filename,
             "file_content": file_content,
@@ -141,10 +119,14 @@ class DocumentClassifierAgent:
             "success": False,
         }
 
-        return self.workflow.invoke(initial)
+        # Ordered pipeline (same as your former graph)
+        self.extract_content(state)
+        self.generate_embeddings(state)
+        self.finalize(state)
 
-    # ---------------- Utility ----------------
+        return state
 
+    # ---------------- Helpers ----------------
     def _chunk_text(self, text: str, chunk_size=1000, overlap=200):
         chunks: List[str] = []
         start = 0
