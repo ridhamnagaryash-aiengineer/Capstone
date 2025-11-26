@@ -5,34 +5,26 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 database_url=os.getenv("DATABASE_URL")
-
-# Remove SQLite-specific options for Postgres
 connect_args = {}
 engine_args = {}
-
 # If SQLite → allow single-thread
 if database_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
     engine_args["connect_args"] = connect_args
 else:
     # Postgres (Supabase) → standard pooling
-    # DON'T use StaticPool here
     engine_args["pool_pre_ping"] = True
 
-# Create engine
+# Creating engine 
 engine = create_engine(
     database_url,
     echo=os.getenv("DEBUG", "False").lower() == "true",
     **engine_args
 )
-
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 # ORM base
 Base = declarative_base()
-
-
 def get_db():
     db = SessionLocal()
     try:

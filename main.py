@@ -3,29 +3,32 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from src.core.database import get_db, engine, Base
-from src.core.security import get_current_active_user
-from src.models.user import User
+
+from src.core.database import engine, Base
 from src.routes.admin import admin_router
-from src.routes.auth import auth_router
 from src.routes.employee import emp_router
+
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError, HTTPException as FastAPIHTTPException
 from src.handlers.error_handler import error_handler as CustomError
+from src.models.document import HRDocument
 
-# Create database tables
+# TEMP FIX – drop and recreate hr_documents
+HRDocument.__table__.drop(engine, checkfirst=True)
 Base.metadata.create_all(bind=engine)
+
+
 
 app = FastAPI(
     title="HR Assistant API",
-    description="AI-powered HR Document Management and Chat System",
-    version="1.0.0"
+    description="AI-powered HR Document Management + Retrieval",
+    version="2.0.0"
 )
 
-# CORS middleware
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,24 +37,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth_router)
+# Routers
 app.include_router(admin_router)
 app.include_router(emp_router)
 
+# ---------------- EXCEPTION HANDLERS ----------------
 
-# Centralized exception handlers
 @app.exception_handler(CustomError)
 async def custom_error_handler(request: Request, exc: CustomError):
-    return JSONResponse(status_code=getattr(exc, "status_code", 500), content={"detail": str(exc)}, headers=getattr(exc, "headers", {}))
-
+    return JSONResponse(
+        status_code=getattr(exc, "status_code", 500),
+        content={"detail": str(exc)}
+    )
 
 @app.exception_handler(FastAPIHTTPException)
 async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+
     def sanitize(obj):
         if isinstance(obj, bytes):
             try:
@@ -67,14 +75,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     safe_errors = sanitize(exc.errors())
     return JSONResponse(status_code=422, content={"detail": safe_errors})
 
-
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    # For security, avoid returning full exception details in production
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
 
+# ---------------- HEALTH CHECKS ----------------
 
-    
 @app.get("/")
 async def root():
     return {"message": "HR Assistant API is running"}
@@ -83,18 +92,13 @@ async def root():
 async def health_check():
     return {"status": "healthy", "service": "HR Assistant API"}
 
-@app.get("/protected-test")
-async def protected_test(current_user: User = Depends(get_current_active_user)):
-    return {"message": f"Hello {current_user.username}", "user_id": current_user.id}
+# ---------------- LAUNCH ----------------
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Get port from environment variable, default to 8000 if not set
-    port = int(os.getenv("PORT", 8000))
-    
+    port = int(os.getenv("PORT", 9000))
     uvicorn.run(
-        app, 
-        host="0.0.0.0", 
+        app,
+        host="0.0.0.0",
         port=port
     )

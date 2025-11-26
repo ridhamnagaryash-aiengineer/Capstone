@@ -1,47 +1,13 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict
-from datetime import datetime
+from typing import List, Dict, Optional
+
 
 class ChatMessageCreate(BaseModel):
-    """Schema for creating a new chat message"""
+    """Incoming chat message for stateless chat."""
     message: str = Field(..., min_length=1, max_length=2000)
-    session_id: Optional[str] = None  # If None, creates a new chat session
 
-class ChatMessageResponse(BaseModel):
-    """Represents a stored chat message"""
-    id: int
-    role: str
-    content: str
-    retrieved_chunks: int
-    sources: Optional[str]
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class ChatSessionResponse(BaseModel):
-    """Represents a chat session summary (improved for UI)"""
-    id: Optional[int]
-    session_id: str
-    title: str
-    is_active: bool
-    created_at: datetime
-    updated_at: Optional[datetime]
-    message_count: int = 0
-    last_message_preview: str = ""
-
-    class Config:
-        from_attributes = True
 
 class ChatResponse(BaseModel):
-    """Response model for chat queries"""
     response: str
-    sources: List[Dict] = Field(default_factory=list)
+    sources: List[Dict] = []
     message_id: Optional[int] = None
-    category: Optional[str] = "uncategorized"
-   
-
-class ChatHistoryResponse(BaseModel):
-    """Full history for a chat session"""
-    session: ChatSessionResponse
-    messages: List[ChatMessageResponse]
