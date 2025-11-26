@@ -23,7 +23,7 @@ class ChatService:
             result = await self.router.process_query(
                 user_query=user_query,
                 chat_history=[],   
-                user_info=None     
+                llm_params=llm_params     
             )
 
             if not result.get("success"):

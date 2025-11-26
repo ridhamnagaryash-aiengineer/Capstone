@@ -1,7 +1,0 @@
-# config/model_config.yaml
-llm:
-  provider: "google"
-  model: "gemini-2.5-flash-lite"
-  embedding_model: "models/embedding-001"
-  temperature: 0.3
-  max_tokens: 1024

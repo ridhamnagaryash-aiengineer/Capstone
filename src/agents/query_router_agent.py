@@ -55,7 +55,45 @@ class QueryRouterAgent:
     # ------------------------------------------------------------
     # STEP 3 — RESPONSE GENERATION
     # ------------------------------------------------------------
-    def _generate(self, state: Dict) -> None:
+    # def _generate(self, state: Dict ,llm_params: Dict) -> None:
+    #     docs = state.get("retrieved_chunks", [])
+
+    #     # No RAG hits → fallback HR guidance
+    #     if not docs:
+    #         fallback = (
+    #             f"The user asked: '{state['user_query']}'.\n"
+    #             "No documents matched; provide best HR guidance."
+    #         )
+    #         generated = self.llm.chat_completion(
+    #             [{"role": "user", "content": fallback}]
+    #         )
+    #         state["llm_response"] = generated
+    #         state["sources"] = []
+    #         state["success"] = True
+    #         return
+
+    #     # Build context
+    #     context = "\n\n".join(
+    #         [f"[{d.get('filename')}] → {d.get('content')}" for d in docs]
+    #     )
+
+    #     template = self.templates.get("chat_response")
+    #     prompt = template.format(
+    #         context=context,
+    #         question=state["user_query"],
+    #         user_context=""
+    #     )
+
+    #     generated = self.llm.chat_completion(
+    #         [{"role": "user", "content": prompt}]
+    #     )
+
+    #     state["llm_response"] = generated
+    #     state["sources"] = docs
+    #     state["success"] = True
+
+
+    def _generate(self, state: Dict, llm_params: Dict) -> None:
         docs = state.get("retrieved_chunks", [])
 
         # No RAG hits → fallback HR guidance
@@ -64,9 +102,12 @@ class QueryRouterAgent:
                 f"The user asked: '{state['user_query']}'.\n"
                 "No documents matched; provide best HR guidance."
             )
+
             generated = self.llm.chat_completion(
-                [{"role": "user", "content": fallback}]
+                messages=[{"role": "user", "content": fallback}],
+                llm_params=llm_params
             )
+
             state["llm_response"] = generated
             state["sources"] = []
             state["success"] = True
@@ -85,7 +126,8 @@ class QueryRouterAgent:
         )
 
         generated = self.llm.chat_completion(
-            [{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            llm_params=llm_params
         )
 
         state["llm_response"] = generated
@@ -99,7 +141,7 @@ class QueryRouterAgent:
         self,
         user_query: str,
         chat_history: List[Dict],
-        user_info=None
+        llm_params: Dict = None,
     ) -> Dict[str, Any]:
 
         state = {
@@ -117,7 +159,7 @@ class QueryRouterAgent:
         # identical flow, but directly calling functions
         self._embedding(state)
         await self._search(state)
-        self._generate(state)
+        self._generate(state,llm_params)
 
         return {
             "response": state.get("llm_response"),
