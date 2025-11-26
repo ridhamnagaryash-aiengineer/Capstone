@@ -36,7 +36,8 @@ async def chat_with_hr(
                 **model_config  
             }
             auth_token = request.headers.get("Authorization")
-            # llm_params.update({"auth_token": '123'})
+            if auth_token:
+                llm_params.update({"auth_token": auth_token})
     except Exception as e:
         logging.error(f"Error extracting attendees: {str(e)}")
         return []
