@@ -25,12 +25,15 @@ class ChatService:
                 chat_history=[],   
                 llm_params=llm_params     
             )
-
+            response_text = result['response'].choices[0].message.content.strip()
+            # result.choices[0].message.content.strip()
+            # result['response']['choices'][0]['message'].content
+            # result.response.choices[0].message.content.strip()
             if not result.get("success"):
                 raise Exception(result.get("error", "Unknown error"))
 
             return (
-                result.get("response"),
+                response_text,
                 result.get("sources", [])
             )
 

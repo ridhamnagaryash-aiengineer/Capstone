@@ -3,9 +3,11 @@
 import logging
 from typing import List, Dict, Any
 
-from src.llm.lite_client import lite_client
+# from src.llm.lite_client import lite_client
 from src.retriever.hr_retriever import HRRetriever
 from src.prompts_engineering.prompts_loader import prompt_loader
+from src.utils.obs import LLMUsageTracker
+import litellm
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -18,9 +20,10 @@ class QueryRouterAgent:
     """
 
     def __init__(self):
-        self.llm = lite_client
+        # self.llm = lite_client
         self.templates = prompt_loader
         self.retriever = HRRetriever()
+        self.auth_token = None
 
         logger.info("QueryRouterAgent initialized (pure Python pipeline)")
 
@@ -29,8 +32,15 @@ class QueryRouterAgent:
     # ------------------------------------------------------------
     def _embedding(self, state: Dict) -> None:
         try:
-            emb = self.llm.create_embedding(state["user_query"])
-            state["query_embedding"] = list(emb)
+            # emb = litellm.create_embedding(state["user_query"])
+
+            emb = litellm.embedding(
+                model="gemini/text-embedding-004",  # or any supported embedding model
+                input=state["user_query"])     # str or list[str]
+            # print("emb", emb)
+            vector = emb["data"][0]["embedding"]
+            # print("vector", vector)
+            state["query_embedding"] = list(vector)
         except Exception as e:
             logger.exception("Embedding error")
             state["query_embedding"] = []
@@ -102,13 +112,16 @@ class QueryRouterAgent:
                 f"The user asked: '{state['user_query']}'.\n"
                 "No documents matched; provide best HR guidance."
             )
-
-            generated = self.llm.chat_completion(
+            self.auth_token = llm_params.pop("auth_token", "")
+            response = litellm.completion(
+                **llm_params,
                 messages=[{"role": "user", "content": fallback}],
-                llm_params=llm_params
             )
+            print("response", response)
+            token_tracker = LLMUsageTracker()
+            token_tracker.track_response(response=response, auth_token=self.auth_token, model=llm_params.get("model", ""))
 
-            state["llm_response"] = generated
+            state["llm_response"] = response
             state["sources"] = []
             state["success"] = True
             return
@@ -124,13 +137,15 @@ class QueryRouterAgent:
             question=state["user_query"],
             user_context=""
         )
-
-        generated = self.llm.chat_completion(
+        # auth_token = llm_params.pop("auth_token", "")
+        response = litellm.completion(
+            **llm_params,
             messages=[{"role": "user", "content": prompt}],
-            llm_params=llm_params
         )
-
-        state["llm_response"] = generated
+        print("response", response)
+        token_tracker = LLMUsageTracker()
+        token_tracker.track_response(response=response, auth_token=self.auth_token, model=llm_params.get("model", ""))
+        state["llm_response"] = response
         state["sources"] = docs
         state["success"] = True
 
@@ -160,7 +175,6 @@ class QueryRouterAgent:
         self._embedding(state)
         await self._search(state)
         self._generate(state,llm_params)
-
         return {
             "response": state.get("llm_response"),
             "sources": state.get("sources"),

@@ -175,7 +175,7 @@ import logging
 import os
 from typing import List, Dict
 from litellm import completion, embedding
-from src.utils.obs import TokenTracker
+from src.utils.obs import LLMUsageTracker
 from langchain_core.outputs import LLMResult
 
 logger = logging.getLogger(__name__)
@@ -223,7 +223,7 @@ class LiteLLMClient:
 
             # ---- token tracking ----
             try:
-                tracker = TokenTracker(model=model)
+                # tracker = TokenTracker(model=model)
 
                 fake_result = LLMResult(
                     llm_output={
