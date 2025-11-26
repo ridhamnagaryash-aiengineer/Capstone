@@ -5,7 +5,7 @@ import logging
 import os
 from typing import List, Dict
 from litellm import completion, embedding
-from src.utils.obs import TokenTracker
+from src.utils.obs import LLMUsageTracker
 from langchain_core.outputs import LLMResult
 
 logger = logging.getLogger(__name__)
@@ -50,14 +50,7 @@ class LiteLLMClient:
             )
 
             try:
-                usage = response.get("usage", {})
-                
-                prompt_tokens = usage.get("prompt_tokens", 0)
-                completion_tokens = usage.get("completion_tokens", 0)
-                total_tokens = usage.get("total_tokens", 0)
-                
-                completion_tokens_details = usage.get("completion_tokens_details", {})
-                reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0) if completion_tokens_details else 0
+                # tracker = TokenTracker(model=model)
 
                 tracker = TokenTracker(model=model)
                 
