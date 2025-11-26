@@ -1,14 +1,10 @@
 # src/retriever/hr_retriever.py
 import logging
 from typing import List, Dict, Optional
-
 from src.vector_db.milvus_client import milvus_client
-
 logger = logging.getLogger(__name__)
-
-
 class HRRetriever:
-    """Simple retriever for unified Milvus collection."""
+    """Basic retriever for unified Milvus collection."""
 
     def __init__(self):
         self.db = milvus_client

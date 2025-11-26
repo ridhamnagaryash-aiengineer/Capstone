@@ -5,8 +5,7 @@ from src.core.security import get_current_active_user
 from src.models.user import User
 
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-
+# API for Signup-Diabled for now.
 @auth_router.post("/signup")
 async def signup_removed():
     """
@@ -17,7 +16,7 @@ async def signup_removed():
         detail="Signup is disabled in this system."
     )
 
-
+# API for login-Diabled for now.
 @auth_router.post("/login")
 async def login_removed():
     """
@@ -28,7 +27,7 @@ async def login_removed():
         detail="Login is disabled in this system."
     )
 
-
+# Default User
 @auth_router.get("/me")
 async def get_me(current_user: User = Depends(get_current_active_user)):
     """

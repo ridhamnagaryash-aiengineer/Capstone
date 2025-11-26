@@ -9,15 +9,14 @@ from src.models.user import User
 
 emp_router = APIRouter(prefix="/employee", tags=["Employee"])
 
-
+# API for HR Chat
 @emp_router.post("/chat", response_model=ChatResponse)
 async def chat_with_hr(
     chat_request: ChatMessageCreate,
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    Stateless HR chat endpoint.
-    No sessions. No history. No DB.
+    Stateless HR chat endpoint without sessions ,chat history and DB querying.
     """
     try:
         response_text, sources = await chat_service.process_chat_query(

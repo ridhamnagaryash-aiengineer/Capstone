@@ -5,14 +5,11 @@ import logging
 import os
 from typing import Tuple, Optional
 from pathlib import Path
-
 from fastapi import UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-
 import fitz
 import docx
 import boto3
-
 from src.llm.lite_client import lite_client
 from src.vector_db.milvus_client import milvus_client
 from src.models.document import HRDocument
