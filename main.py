@@ -13,7 +13,7 @@ from src.routes.employee import emp_router
 
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError, HTTPException as FastAPIHTTPException
-from src.handlers.error_handler import error_handler as CustomError
+
 from src.models.document import HRDocument
 
 # TEMP FIX – drop and recreate hr_documents
@@ -43,12 +43,7 @@ app.include_router(emp_router)
 
 # ---------------- EXCEPTION HANDLERS ----------------
 
-@app.exception_handler(CustomError)
-async def custom_error_handler(request: Request, exc: CustomError):
-    return JSONResponse(
-        status_code=getattr(exc, "status_code", 500),
-        content={"detail": str(exc)}
-    )
+
 
 @app.exception_handler(FastAPIHTTPException)
 async def http_exception_handler(request: Request, exc: FastAPIHTTPException):

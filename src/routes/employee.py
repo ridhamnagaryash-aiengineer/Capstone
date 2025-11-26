@@ -2,7 +2,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Form, Request, Body
 from typing import List
 import json
-from src.core.security import get_current_active_user
 from src.schemas.chat import ChatMessageCreate, ChatResponse
 from src.services.chat_service import chat_service
 from src.models.user import User
