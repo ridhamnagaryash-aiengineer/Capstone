@@ -1,4 +1,4 @@
-# src/config/prompt_loader.py
+
 import yaml
 from pathlib import Path
 
@@ -15,6 +15,4 @@ class PromptLoader:
         if key not in self.prompts:
             raise KeyError(f"Prompt '{key}' not found in template file.")
         return self.prompts[key]
-
-
 prompt_loader = PromptLoader()
