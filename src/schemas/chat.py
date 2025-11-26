@@ -8,7 +8,6 @@ class ChatMessageCreate(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    session_id: str = ""
     response: str
     sources: List[Dict] = []
     message_id: Optional[int] = None

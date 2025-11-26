@@ -14,17 +14,10 @@ emp_router = APIRouter(prefix="/employee", tags=["Employee"])
 # API for HR Chat
 @emp_router.post("/chat", response_model=ChatResponse)
 async def chat_with_hr(
-    # request: Request,
-    chat_request: ChatMessageCreate = Body(...),
-    current_user: User = Depends(get_current_active_user),
-    user_metadata: str  = Form(None)
+    request: Request,
+    message: str = Form(..., min_length=1, max_length=2000),
+    user_metadata: str = Form(None)
 ):
-<<<<<<< HEAD
-    """
-    Stateless HR chat endpoint without sessions ,chat history and DB querying.
-    """
-=======
-    breakpoint()
     user_metadata = json.loads(user_metadata) if user_metadata else {}
     team_id = user_metadata.get("team_id")
     try:
@@ -41,20 +34,18 @@ async def chat_with_hr(
                 "model": provider_model,
                 **model_config  
             }
-            # auth_token = request.headers.get("Authorization")
-            llm_params.update({"auth_token": '123'})
+            auth_token = request.headers.get("Authorization")
+            # llm_params.update({"auth_token": '123'})
     except Exception as e:
         logging.error(f"Error extracting attendees: {str(e)}")
         return []
 
->>>>>>> 79a00ecbeac271db366348878f9e85d7d9afea16
     try:
         response_text, sources = await chat_service.process_chat_query(
-            user_query=chat_request.message,
+            user_query=message,
             llm_params=llm_params
         )
         return ChatResponse(
-            session_id="",
             response=response_text,
             sources=sources,
             message_id=None

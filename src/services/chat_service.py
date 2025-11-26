@@ -22,14 +22,8 @@ class ChatService:
         try:
             result = await self.router.process_query(
                 user_query=user_query,
-<<<<<<< HEAD
                 chat_history=[],   
                 user_info=None     
-=======
-                chat_history=[],   # always empty
-                user_info=None,     # no user context
-                llm_params=llm_params
->>>>>>> 79a00ecbeac271db366348878f9e85d7d9afea16
             )
 
             if not result.get("success"):
