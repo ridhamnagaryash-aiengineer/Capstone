@@ -175,7 +175,7 @@ import logging
 import os
 from typing import List, Dict
 from litellm import completion, embedding
-from utils.obs import TokenTracker
+from src.utils.obs import TokenTracker
 from langchain_core.outputs import LLMResult
 
 logger = logging.getLogger(__name__)

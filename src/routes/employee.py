@@ -16,7 +16,8 @@ emp_router = APIRouter(prefix="/employee", tags=["Employee"])
 async def chat_with_hr(
     request: Request,
     message: str = Form(..., min_length=1, max_length=2000),
-    user_metadata: str = Form(None)
+    user_metadata: str | None = Form(None)   
+
 ):
     user_metadata = json.loads(user_metadata) if user_metadata else {}
     team_id = user_metadata.get("team_id")
