@@ -1,8 +1,10 @@
 # src/agents/query_router_agent.py
+
 import logging
-import litellm
-from typing import TypedDict, List, Dict, Any, Optional
-from langgraph.graph import StateGraph, END
+from typing import List, Dict, Any, Optional
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough, RunnableMap
+
+
 
 from src.llm.lite_client import lite_client
 from src.retriever.hr_retriever import HRRetriever
@@ -12,161 +14,110 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-# ---------------- STATE ----------------
-class QueryState(TypedDict):
-    user_query: str
-    chat_history: List[Dict]
-    query_embedding: List[float]
-    retrieved_chunks: List[Dict]
-    llm_response: str
-    sources: List[Dict]
-    current_node: str
-    error: str
-    success: bool
-    user_info: Dict[str, Any]
-    llm_params: Dict[str, Any]  # <‑‑ add this
-
-
-# ---------------- AGENT ----------------
 class QueryRouterAgent:
-    """
-    Stateless query router. No user context/personality is inserted into prompts.
-    Flow: embedding -> search -> response generation (RAG)
-    """
 
     def __init__(self):
         # self.llm = lite_client
         self.templates = prompt_loader
         self.retriever = HRRetriever()
+
+        # Build runnable pipeline
         self.workflow = self._build()
-        logger.info("QueryRouterAgent initialized (stateless, no user context)")
 
-    def _build(self):
-        g = StateGraph(QueryState)
+        logger.info("QueryRouterAgent initialized using LangChain Runnable pipeline")
 
-        g.add_node("generate_embedding", self.generate_embedding)
-        g.add_node("search_milvus", self.search_milvus)
-        g.add_node("generate_response", self.generate_response)
-
-        g.set_entry_point("generate_embedding")
-        g.add_edge("generate_embedding", "search_milvus")
-        g.add_edge("search_milvus", "generate_response")
-        g.add_edge("generate_response", END)
-
-        return g.compile()
-
-    # ---------------- 1. EMBEDDING ----------------
-    def generate_embedding(self, state: QueryState) -> QueryState:
-        state["current_node"] = "generate_embedding"
+    # ----------- EMBEDDING -----------
+    def _embedding(self, state: Dict) -> Dict:
         try:
             emb = self.llm.create_embedding(state["user_query"])
-            state["query_embedding"] = emb if isinstance(emb, list) else list(emb)
-            return state
+            state["query_embedding"] = list(emb)
         except Exception as e:
-            logger.exception("[Router] embedding error")
-            state["error"] = f"embedding_error: {e}"
+            logger.exception("Embedding error")
             state["query_embedding"] = []
-            return state
+            state["error"] = f"embedding_error: {e}"
+        return state
 
-    # ---------------- 2. MILVUS SEARCH ----------------
-    async def search_milvus(self, state: QueryState) -> QueryState:
-        state["current_node"] = "search_milvus"
+    # ----------- RETRIEVAL -----------
+    async def _search(self, state: Dict) -> Dict:
         try:
-            results = await self.retriever.retrieve(
-            query=state["user_query"],
-            query_embedding=state.get("query_embedding"),
-            top_k=5)
-
-
-            logger.info(f"[Router] Retrieved {len(results)} chunks")
-            state["retrieved_chunks"] = results
-            return state
-
+            chunks = await self.retriever.retrieve(
+                query=state["user_query"],
+                query_embedding=state.get("query_embedding"),
+                top_k=5,
+            )
+            state["retrieved_chunks"] = chunks
         except Exception as e:
-            logger.exception("[Router] search_milvus error")
+            logger.exception("Milvus search error")
             state["retrieved_chunks"] = []
             state["error"] = str(e)
-            return state
+        return state
 
-    # ---------------- 3. RESPONSE GENERATION ----------------
-    def generate_response(self, state: QueryState) -> QueryState:
-        state["current_node"] = "generate_response"
-        try:
-            docs = state.get("retrieved_chunks") or []
-            llm_params = state.get("llm_params") or {}
+    # ----------- RESPONSE GEN -----------
+    def _generate(self, state: Dict) -> Dict:
+        docs = state.get("retrieved_chunks", [])
 
-            # Fallback: no RAG hits
-            if not docs:
-                fallback = (
-                    f"The user asked: '{state['user_query']}'.\n"
-                    "No documents matched; provide best HR guidance.\n"
-                )
-                messages = [{"role": "user", "content": fallback}]
-                response = litellm.completion(
-                    **llm_params,
-                    messages=messages,
-                )
-                response_text = response.choices[0].message.content
-                state["llm_response"] = response_text
-                state["sources"] = []
-                state["success"] = True
-                return state
-
-            # RAG MODE (no personalization)
-            context = "\n\n".join(
-                [f"[{d.get('filename')}] → {d.get('content')}" for d in docs]
+        if not docs:
+            fallback = (
+                f"The user asked: '{state['user_query']}'.\n"
+                "No documents matched; provide best HR guidance."
             )
-            template = self.templates.get("chat_response")
-            prompt = template.format(
-                context=context,
-                question=state["user_query"],
-                user_context="",  # keep template compatibility but empty
-            )
-            messages = [{"role": "user", "content": prompt}]
-            response = litellm.completion(
-                **llm_params,
-                messages=messages,
-            )
-            response_text = response.choices[0].message.content
-            state["llm_response"] = response_text
-            state["sources"] = docs
+            out = self.llm.chat_completion([{"role": "user", "content": fallback}])
+            state["llm_response"] = out
+            state["sources"] = []
             state["success"] = True
             return state
 
-        except Exception as e:
-            logger.exception("[Router] response error")
-            state["error"] = f"response_error: {e}"
-            state["success"] = False
-            return state
+        context = "\n\n".join(
+            [f"[{d.get('filename')}] → {d.get('content')}" for d in docs]
+        )
 
-    # ---------------- PUBLIC ENTRY ----------------
-    async def process_query(
-        self,
-        user_query: str,
-        chat_history: List[Dict],
-        user_info=None,
-        llm_params: Dict[str, Any] = None,
-    ) -> Dict[str, Any]:
-        initial: QueryState = {
+        template = self.templates.get("chat_response")
+        prompt = template.format(
+            context=context,
+            question=state["user_query"],
+            user_context=""
+        )
+
+        out = self.llm.chat_completion([{"role": "user", "content": prompt}])
+
+        state["llm_response"] = out
+        state["sources"] = docs
+        state["success"] = True
+        return state
+
+    # ----------- BUILD RUNNABLE PIPELINE -----------
+    def _build(self):
+        return (
+            RunnablePassthrough()  # input state
+            | RunnableLambda(self._embedding)
+            | RunnableLambda(lambda s: self._search(s))  # ASYNC handled in process_query
+            | RunnableLambda(self._generate)
+        )
+
+    # ----------- PUBLIC API -----------
+    async def process_query(self, user_query: str, chat_history: List[Dict], user_info=None):
+        initial = {
             "user_query": user_query,
             "chat_history": chat_history or [],
             "query_embedding": [],
             "retrieved_chunks": [],
             "llm_response": "",
             "sources": [],
-            "current_node": "",
             "error": "",
             "success": False,
-            "user_info": {},   # not used
-            "llm_params": llm_params or {},  # <‑‑ store here
+            "user_info": {},
         }
-        final = await self.workflow.ainvoke(initial)
+
+        # Run the pipeline
+        state = initial
+        state = self._embedding(state)
+        state = await self._search(state)
+        state = self._generate(state)
+
         return {
-            "response": final.get("llm_response"),
-            "sources": final.get("sources", []),
-            "success": final.get("success"),
-            "error": final.get("error"),
+            "response": state.get("llm_response"),
+            "sources": state.get("sources"),
+            "success": state.get("success"),
+            "error": state.get("error"),
         }
-
-
 query_router_agent = QueryRouterAgent()
