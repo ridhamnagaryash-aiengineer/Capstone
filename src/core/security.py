@@ -1,14 +1,6 @@
 
 from src.models.user import User, UserRole
-#set to always return a default user
-def get_current_active_user() -> User:
-    return User(
-        id=1,
-        email="anonymous@example.com",
-        username="anonymous",
-        role=UserRole.EMPLOYEE,
-        grade="standard"
-    )
+
 
 def get_current_admin() -> User:
     return User(
@@ -18,5 +10,3 @@ def get_current_admin() -> User:
         role=UserRole.ADMIN,
         grade="admin"
     )
-def get_current_employee() -> User:
-    return get_current_active_user()

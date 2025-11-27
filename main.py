@@ -2,17 +2,11 @@
 import os
 from dotenv import load_dotenv
 load_dotenv()
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-
 from src.core.database import engine, Base
 from src.routes.admin import admin_router
 from src.routes.employee import emp_router
-
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError, HTTPException as FastAPIHTTPException
 from src.handlers.error_handler import error_handler as CustomError
 from src.models.document import HRDocument
 
@@ -41,46 +35,7 @@ app.add_middleware(
 app.include_router(admin_router)
 app.include_router(emp_router)
 
-# ---------------- EXCEPTION HANDLERS ----------------
 
-@app.exception_handler(CustomError)
-async def custom_error_handler(request: Request, exc: CustomError):
-    return JSONResponse(
-        status_code=getattr(exc, "status_code", 500),
-        content={"detail": str(exc)}
-    )
-
-@app.exception_handler(FastAPIHTTPException)
-async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail}
-    )
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-
-    def sanitize(obj):
-        if isinstance(obj, bytes):
-            try:
-                return obj.decode("utf-8", errors="replace")
-            except:
-                return str(obj)
-        if isinstance(obj, dict):
-            return {k: sanitize(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [sanitize(v) for v in obj]
-        return obj
-
-    safe_errors = sanitize(exc.errors())
-    return JSONResponse(status_code=422, content={"detail": safe_errors})
-
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"}
-    )
 
 # ---------------- HEALTH CHECKS ----------------
 

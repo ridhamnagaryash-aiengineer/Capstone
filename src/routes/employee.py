@@ -2,12 +2,18 @@
 from fastapi import APIRouter, HTTPException, Depends, Form, Request, Body
 from typing import List
 import json
-from src.core.security import get_current_active_user
 from src.schemas.chat import ChatMessageCreate, ChatResponse
 from src.services.chat_service import chat_service
-from src.models.user import User
 from config.config import get_model_config
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    filemode="a",
+    filename="app.log",
+    format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 emp_router = APIRouter(prefix="/employee", tags=["Employee"])
 
