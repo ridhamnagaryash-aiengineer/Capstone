@@ -8,12 +8,12 @@ def test_chat_query(embed_mock, chat_mock, search_mock, client):
     embed_mock.return_value = [0.1, 0.2, 0.3]
 
     search_mock.return_value = [
-        {"filename": "policy.pdf", "content": "test content"}
+    {"filename": "policy.pdf", "content": "test content"}
     ]
 
     chat_mock.return_value = "This is the HR answer"
 
-    response = client.post("/employee/chat", json={"message": "leave policy"})
+    response = client.post("/employee/chat", json={"message": "what is cafeteria mangment"})
 
     assert response.status_code == 200
     data = response.json()

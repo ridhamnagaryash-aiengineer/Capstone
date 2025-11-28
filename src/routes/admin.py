@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File,Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from src.core.security import get_current_admin  
 from src.core.database import get_db
@@ -10,13 +10,14 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin"])
 
 @admin_router.post("/documents", response_model=HRDocumentResponse)
 async def upload_document(
-    file: UploadFile = File(...),
+    s3url: str = Form(..., min_length=1, max_length=2000),
     db: Session = Depends(get_db),
     background_tasks: BackgroundTasks = None,
     current_user = Depends(get_current_admin)   
 ):
+
     return await document_service.process_document_upload(
-        file=file,
+        s3url=s3url,
         user=current_user,
         db=db,
         background_tasks=background_tasks

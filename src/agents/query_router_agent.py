@@ -62,46 +62,6 @@ class QueryRouterAgent:
             state["retrieved_chunks"] = []
             state["error"] = str(e)
 
-    # ------------------------------------------------------------
-    # STEP 3 — RESPONSE GENERATION
-    # ------------------------------------------------------------
-    # def _generate(self, state: Dict ,llm_params: Dict) -> None:
-    #     docs = state.get("retrieved_chunks", [])
-
-    #     # No RAG hits → fallback HR guidance
-    #     if not docs:
-    #         fallback = (
-    #             f"The user asked: '{state['user_query']}'.\n"
-    #             "No documents matched; provide best HR guidance."
-    #         )
-    #         generated = self.llm.chat_completion(
-    #             [{"role": "user", "content": fallback}]
-    #         )
-    #         state["llm_response"] = generated
-    #         state["sources"] = []
-    #         state["success"] = True
-    #         return
-
-    #     # Build context
-    #     context = "\n\n".join(
-    #         [f"[{d.get('filename')}] → {d.get('content')}" for d in docs]
-    #     )
-
-    #     template = self.templates.get("chat_response")
-    #     prompt = template.format(
-    #         context=context,
-    #         question=state["user_query"],
-    #         user_context=""
-    #     )
-
-    #     generated = self.llm.chat_completion(
-    #         [{"role": "user", "content": prompt}]
-    #     )
-
-    #     state["llm_response"] = generated
-    #     state["sources"] = docs
-    #     state["success"] = True
-
 
     def _generate(self, state: Dict, llm_params: Dict) -> None:
         docs = state.get("retrieved_chunks", [])

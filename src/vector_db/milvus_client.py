@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 COLLECTION_NAME = os.getenv("MILVUS_COLLECTION", "hrms_all")
+
 DIMENSION = int(os.getenv("EMBED_DIMENSION", "768"))
 
 class MilvusClient:
